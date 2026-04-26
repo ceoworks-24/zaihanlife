@@ -230,14 +230,19 @@ export default function ZaihanLife() {
     setAuthError("");
 
     if (authMode === "signup") {
-      const { error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email: authEmail,
         password: authPassword,
         options: { data: { nickname: authNickname } },
       });
       if (error) {
         setAuthError(t("회원가입에 실패했습니다. 다시 시도해주세요.", "注册失败，请重试。"));
+      } else if (data.session) {
+        // Confirm email OFF: 세션이 바로 발급되므로 즉시 로그인 처리
+        setShowAuth(false);
+        setAuthEmail(""); setAuthPassword(""); setAuthNickname("");
       } else {
+        // Confirm email ON: 이메일 인증 안내
         setAuthError(t("인증 이메일을 확인해주세요!", "请查看验证邮件！"));
       }
     } else {
@@ -266,6 +271,15 @@ export default function ZaihanLife() {
     setWriteLoading(true);
     setWriteError("");
 
+    // 세션이 실제로 살아있는지 재확인
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      setUser(null);
+      setShowAuth(true);
+      setWriteLoading(false);
+      return;
+    }
+
     const nickname = writeAnon
       ? t("익명", "匿名")
       : (user.user_metadata?.nickname || user.email?.split("@")[0] || t("익명", "匿名"));
@@ -277,7 +291,7 @@ export default function ZaihanLife() {
       title_zh: writeTitle,
       content: writeContent,
       content_zh: writeContent,
-      author_id: user.id,
+      author_id: session.user.id,
       author_name: nickname,
       views: 0,
       likes: 0,
@@ -288,8 +302,8 @@ export default function ZaihanLife() {
       setWriteTitle(""); setWriteContent(""); setWriteCat(""); setWriteTag(""); setWriteAnon(false);
       goHome();
     } else {
-      // [fix] 에러 피드백 추가
-      setWriteError(t("등록에 실패했습니다. 다시 시도해주세요.", "发帖失败，请重试。"));
+      console.error("[글쓰기 오류]", error);
+      setWriteError(`오류: ${error.message}`);
     }
     setWriteLoading(false);
   };
