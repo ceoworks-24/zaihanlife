@@ -80,6 +80,9 @@ const formatDate = (str) => {
   return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
 };
 
+// 공통 input 스타일 — fontSize 16px: iOS Safari 자동 줌 방지
+const INPUT_STYLE = { width: "100%", border: "1px solid #ddd", borderRadius: 8, padding: "10px 12px", fontSize: 16, fontFamily: "inherit", outline: "none", boxSizing: "border-box" };
+
 export default function ZaihanLife() {
   const [lang, setLang] = useState("ko");
   const [view, setView] = useState("home");
@@ -103,6 +106,7 @@ export default function ZaihanLife() {
   const [writeContent, setWriteContent] = useState("");
   const [writeAnon, setWriteAnon] = useState(false);
   const [writeLoading, setWriteLoading] = useState(false);
+  const [writeError, setWriteError] = useState("");
 
   // Comment
   const [commentInput, setCommentInput] = useState("");
@@ -116,7 +120,12 @@ export default function ZaihanLife() {
   const [authNickname, setAuthNickname] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
-  const backdropMouseDownTarget = useRef(null);
+  const backdropPointerDownTarget = useRef(null); // [fix] onPointerDown으로 변경 (모바일 터치 호환)
+
+  // [fix] fetchPosts 경쟁 조건 방지 — 가장 최근 요청 id만 상태 반영
+  const fetchCountRef = useRef(0);
+  // [fix] 검색 debounce 타이머
+  const searchTimerRef = useRef(null);
 
   const t = (ko, zh) => lang === "ko" ? ko : zh;
 
@@ -137,13 +146,23 @@ export default function ZaihanLife() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // ── 게시글 불러오기 ──
+  // ── 카테고리/정렬 변경 시 즉시 로드 ──
   useEffect(() => {
     fetchPosts();
-  }, [selectedCategory, searchQuery, sortBy]);
+  }, [selectedCategory, sortBy]);
 
+  // ── 검색어 변경 시 debounce 400ms ──
+  useEffect(() => {
+    clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(fetchPosts, 400);
+    return () => clearTimeout(searchTimerRef.current);
+  }, [searchQuery]);
+
+  // [fix] 경쟁 조건 방지: 요청 id가 현재 최신인 경우에만 상태 업데이트
   const fetchPosts = async () => {
+    const id = ++fetchCountRef.current;
     setLoading(true);
+
     let query = supabase.from("posts").select("*");
 
     if (selectedCategory === "popular") {
@@ -155,27 +174,27 @@ export default function ZaihanLife() {
       if (searchQuery.trim()) {
         query = query.or(`title.ilike.%${searchQuery}%,title_zh.ilike.%${searchQuery}%`);
       }
-      if (sortBy === "views")  query = query.order("views",      { ascending: false });
-      else if (sortBy === "likes") query = query.order("likes",  { ascending: false });
-      else                     query = query.order("created_at", { ascending: false });
+      if (sortBy === "views")       query = query.order("views",      { ascending: false });
+      else if (sortBy === "likes")  query = query.order("likes",      { ascending: false });
+      else                          query = query.order("created_at", { ascending: false });
     }
 
     const { data, error } = await query;
+    if (id !== fetchCountRef.current) return; // 오래된 응답 무시
     if (!error) setPosts(data || []);
     setLoading(false);
   };
 
-  // ── 게시글 열기 (조회수 증가 + 댓글 로드) ──
+  // ── 게시글 열기 ──
   const openPost = async (post) => {
+    window.scrollTo(0, 0); // [fix] 스크롤 초기화
     setSelectedPost(post);
     setView("detail");
     setReplies([]);
 
-    // 조회수 증가
     await supabase.from("posts").update({ views: (post.views || 0) + 1 }).eq("id", post.id);
     setSelectedPost(prev => ({ ...prev, views: (prev?.views || 0) + 1 }));
 
-    // 댓글 로드
     const { data } = await supabase
       .from("replies")
       .select("*")
@@ -184,7 +203,13 @@ export default function ZaihanLife() {
     setReplies(data || []);
   };
 
-  const goHome = () => { setView("home"); setSelectedPost(null); setReplies([]); fetchPosts(); };
+  const goHome = () => {
+    window.scrollTo(0, 0); // [fix] 스크롤 초기화
+    setView("home");
+    setSelectedPost(null);
+    setReplies([]);
+    fetchPosts();
+  };
 
   const handleShortcut = (id) => {
     if (["free","visa","housing","job","popular"].includes(id)) {
@@ -211,7 +236,7 @@ export default function ZaihanLife() {
         options: { data: { nickname: authNickname } },
       });
       if (error) {
-        setAuthError(error.message);
+        setAuthError(t("회원가입에 실패했습니다. 다시 시도해주세요.", "注册失败，请重试。"));
       } else {
         setAuthError(t("인증 이메일을 확인해주세요!", "请查看验证邮件！"));
       }
@@ -239,8 +264,11 @@ export default function ZaihanLife() {
     if (!user) { setShowAuth(true); return; }
     if (!writeCat || !writeTag || !writeTitle.trim() || !writeContent.trim()) return;
     setWriteLoading(true);
+    setWriteError("");
 
-    const nickname = writeAnon ? t("익명", "匿名") : (user.user_metadata?.nickname || user.email?.split("@")[0] || t("익명", "匿名"));
+    const nickname = writeAnon
+      ? t("익명", "匿名")
+      : (user.user_metadata?.nickname || user.email?.split("@")[0] || t("익명", "匿名"));
 
     const { error } = await supabase.from("posts").insert({
       category: writeCat,
@@ -259,6 +287,9 @@ export default function ZaihanLife() {
     if (!error) {
       setWriteTitle(""); setWriteContent(""); setWriteCat(""); setWriteTag(""); setWriteAnon(false);
       goHome();
+    } else {
+      // [fix] 에러 피드백 추가
+      setWriteError(t("등록에 실패했습니다. 다시 시도해주세요.", "发帖失败，请重试。"));
     }
     setWriteLoading(false);
   };
@@ -284,8 +315,9 @@ export default function ZaihanLife() {
     if (!error && data) {
       setReplies(prev => [...prev, data]);
       setCommentInput("");
-      // 댓글 수 업데이트
-      await supabase.from("posts").update({ comments_count: (selectedPost.comments_count || 0) + 1 }).eq("id", selectedPost.id);
+      await supabase.from("posts")
+        .update({ comments_count: (selectedPost.comments_count || 0) + 1 })
+        .eq("id", selectedPost.id);
       setSelectedPost(prev => ({ ...prev, comments_count: (prev?.comments_count || 0) + 1 }));
     }
     setCommentLoading(false);
@@ -307,10 +339,17 @@ export default function ZaihanLife() {
 
   // ── Auth 모달 ──
   const AuthModal = () => (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-      onMouseDown={e => { backdropMouseDownTarget.current = e.target; }}
-      onClick={e => { if (e.target === e.currentTarget && backdropMouseDownTarget.current === e.currentTarget) { setShowAuth(false); setAuthError(""); } }}>
-      <div style={{ background: "#fff", borderRadius: 16, padding: 24, width: "100%", maxWidth: 360 }}>
+    <div
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+      onPointerDown={e => { backdropPointerDownTarget.current = e.target; }} // [fix] onPointerDown: 모바일 터치 호환
+      onClick={e => {
+        if (e.target === e.currentTarget && backdropPointerDownTarget.current === e.currentTarget) {
+          setShowAuth(false); setAuthError("");
+        }
+      }}
+    >
+      {/* [fix] maxHeight + overflowY: 키보드 올라올 때 모달 잘림 방지 */}
+      <div style={{ background: "#fff", borderRadius: 16, padding: 24, width: "100%", maxWidth: 360, maxHeight: "90dvh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
           <span style={{ fontSize: 17, fontWeight: 700, color: "#1a1a1a" }}>
             {authMode === "login" ? t("로그인", "登录") : t("회원가입", "注册")}
@@ -323,26 +362,31 @@ export default function ZaihanLife() {
             <input
               value={authNickname} onChange={e => setAuthNickname(e.target.value)}
               placeholder={t("닉네임", "昵称")} required
-              style={{ width: "100%", border: "1px solid #ddd", borderRadius: 8, padding: "10px 12px", fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box", marginBottom: 10 }}
+              autoComplete="nickname" // [fix] autoComplete 추가
+              style={{ ...INPUT_STYLE, marginBottom: 10 }}
             />
           )}
           <input
             type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)}
             placeholder={t("이메일", "邮箱")} required
-            style={{ width: "100%", border: "1px solid #ddd", borderRadius: 8, padding: "10px 12px", fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box", marginBottom: 10 }}
+            autoComplete="email" // [fix]
+            style={{ ...INPUT_STYLE, marginBottom: 10 }}
           />
           <input
             type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)}
             placeholder={t("비밀번호 (6자 이상)", "密码（6位以上）")} required minLength={6}
-            style={{ width: "100%", border: "1px solid #ddd", borderRadius: 8, padding: "10px 12px", fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box", marginBottom: 14 }}
+            autoComplete={authMode === "login" ? "current-password" : "new-password"} // [fix]
+            style={{ ...INPUT_STYLE, marginBottom: 14 }}
           />
 
           {authError && (
-            <p style={{ fontSize: 12, color: authError.includes("인증") || authError.includes("查看") ? "#27ae60" : "#C0392B", marginBottom: 10, textAlign: "center" }}>{authError}</p>
+            <p style={{ fontSize: 12, color: authError.includes("인증") || authError.includes("查看") ? "#27ae60" : "#C0392B", marginBottom: 10, textAlign: "center" }}>
+              {authError}
+            </p>
           )}
 
           <button type="submit" disabled={authLoading}
-            style={{ width: "100%", background: "#C0392B", color: "#fff", border: "none", borderRadius: 10, padding: "13px", fontSize: 15, fontWeight: 700, cursor: "pointer", opacity: authLoading ? 0.7 : 1 }}>
+            style={{ width: "100%", background: "#C0392B", color: "#fff", border: "none", borderRadius: 10, padding: "13px", fontSize: 15, fontWeight: 700, cursor: authLoading ? "not-allowed" : "pointer", opacity: authLoading ? 0.7 : 1 }}>
             {authLoading ? "..." : (authMode === "login" ? t("로그인", "登录") : t("회원가입", "注册"))}
           </button>
         </form>
@@ -443,62 +487,74 @@ export default function ZaihanLife() {
   );
 
   // ── 글쓰기 ──
-  const WriteView = () => (
-    <div style={{ background: "#fff", minHeight: "100vh" }}>
-      <div style={{ padding: "14px 16px", borderBottom: "1px solid #eee", display: "flex", alignItems: "center", gap: 10 }}>
-        <button onClick={goHome} style={{ background: "none", border: "none", cursor: "pointer", color: "#C0392B", fontSize: 13, fontWeight: 600, padding: 0 }}>← {t("취소", "取消")}</button>
-        <span style={{ fontSize: 15, fontWeight: 700, color: "#1a1a1a" }}>{t("글쓰기", "发帖")}</span>
-      </div>
-      <div style={{ padding: 16 }}>
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "#333", marginBottom: 8 }}>{t("게시판", "版块")} <span style={{ color: "#C0392B" }}>*</span></div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {CATEGORIES.filter(c => !["all","popular"].includes(c.id)).map(cat => (
-              <button key={cat.id} onClick={() => { setWriteCat(cat.id); setWriteTag(""); }}
-                style={{ padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer", border: "1px solid", background: writeCat === cat.id ? "#C0392B" : "#fff", color: writeCat === cat.id ? "#fff" : "#666", borderColor: writeCat === cat.id ? "#C0392B" : "#ddd" }}>
-                {lang === "ko" ? cat.ko : cat.zh}
-              </button>
-            ))}
-          </div>
+  const WriteView = () => {
+    const canSubmit = writeCat && writeTag && writeTitle.trim() && writeContent.trim();
+    return (
+      <div style={{ background: "#fff", minHeight: "100vh" }}>
+        <div style={{ padding: "14px 16px", borderBottom: "1px solid #eee", display: "flex", alignItems: "center", gap: 10 }}>
+          <button onClick={goHome} style={{ background: "none", border: "none", cursor: "pointer", color: "#C0392B", fontSize: 13, fontWeight: 600, padding: 0 }}>← {t("취소", "取消")}</button>
+          <span style={{ fontSize: 15, fontWeight: 700, color: "#1a1a1a" }}>{t("글쓰기", "发帖")}</span>
         </div>
-
-        {writeCat && (
+        <div style={{ padding: 16 }}>
           <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#333", marginBottom: 8 }}>{t("말머리", "标签")} <span style={{ color: "#C0392B" }}>*</span></div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#333", marginBottom: 8 }}>{t("게시판", "版块")} <span style={{ color: "#C0392B" }}>*</span></div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {TAGS[writeCat].map(tag => (
-                <button key={tag.ko} onClick={() => setWriteTag(tag.ko)}
-                  style={{ padding: "5px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer", border: "1px solid", background: writeTag === tag.ko ? "#FEF0EF" : "#fff", color: writeTag === tag.ko ? "#C0392B" : "#666", borderColor: writeTag === tag.ko ? "#FFCDD2" : "#ddd" }}>
-                  [{lang === "ko" ? tag.ko : tag.zh}]
+              {CATEGORIES.filter(c => !["all","popular"].includes(c.id)).map(cat => (
+                <button key={cat.id} onClick={() => { setWriteCat(cat.id); setWriteTag(""); }}
+                  style={{ padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer", border: "1px solid", background: writeCat === cat.id ? "#C0392B" : "#fff", color: writeCat === cat.id ? "#fff" : "#666", borderColor: writeCat === cat.id ? "#C0392B" : "#ddd" }}>
+                  {lang === "ko" ? cat.ko : cat.zh}
                 </button>
               ))}
             </div>
           </div>
-        )}
 
-        <input
-          value={writeTitle} onChange={e => setWriteTitle(e.target.value)}
-          placeholder={t("제목을 입력하세요", "请输入标题")}
-          style={{ width: "100%", border: "1px solid #ddd", borderRadius: 8, padding: "10px 12px", fontSize: 14, fontFamily: "inherit", outline: "none", boxSizing: "border-box", marginBottom: 10 }}
-        />
-        <textarea
-          value={writeContent} onChange={e => setWriteContent(e.target.value)}
-          placeholder={t("내용을 입력하세요", "请输入内容")}
-          style={{ width: "100%", border: "1px solid #ddd", borderRadius: 8, padding: "10px 12px", fontSize: 13, fontFamily: "inherit", outline: "none", resize: "none", height: 180, boxSizing: "border-box", marginBottom: 10 }}
-        />
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 20 }}>
-          <input type="checkbox" id="anon" checked={writeAnon} onChange={e => setWriteAnon(e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} />
-          <label htmlFor="anon" style={{ fontSize: 13, color: "#666", cursor: "pointer" }}>{t("익명으로 작성", "匿名发帖")}</label>
+          {writeCat && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#333", marginBottom: 8 }}>{t("말머리", "标签")} <span style={{ color: "#C0392B" }}>*</span></div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {TAGS[writeCat].map(tag => (
+                  <button key={tag.ko} onClick={() => setWriteTag(tag.ko)}
+                    style={{ padding: "5px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer", border: "1px solid", background: writeTag === tag.ko ? "#FEF0EF" : "#fff", color: writeTag === tag.ko ? "#C0392B" : "#666", borderColor: writeTag === tag.ko ? "#FFCDD2" : "#ddd" }}>
+                    [{lang === "ko" ? tag.ko : tag.zh}]
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <input
+            value={writeTitle} onChange={e => setWriteTitle(e.target.value)}
+            placeholder={t("제목을 입력하세요", "请输入标题")}
+            style={{ ...INPUT_STYLE, marginBottom: 10 }}
+          />
+          <textarea
+            value={writeContent} onChange={e => setWriteContent(e.target.value)}
+            placeholder={t("내용을 입력하세요", "请输入内容")}
+            style={{ ...INPUT_STYLE, resize: "none", height: 180, marginBottom: 10 }}
+          />
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 20 }}>
+            <input type="checkbox" id="anon" checked={writeAnon} onChange={e => setWriteAnon(e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} />
+            <label htmlFor="anon" style={{ fontSize: 13, color: "#666", cursor: "pointer" }}>{t("익명으로 작성", "匿名发帖")}</label>
+          </div>
+
+          {writeError && (
+            <p style={{ fontSize: 12, color: "#C0392B", textAlign: "center", marginBottom: 8 }}>{writeError}</p>
+          )}
+
+          <button
+            onClick={handleWriteSubmit}
+            disabled={writeLoading || !canSubmit}
+            style={{ width: "100%", background: canSubmit ? "#C0392B" : "#ddd", color: "#fff", border: "none", borderRadius: 10, padding: "13px", fontSize: 15, fontWeight: 700, cursor: writeLoading || !canSubmit ? "not-allowed" : "pointer", opacity: writeLoading ? 0.7 : 1 }} // [fix] disabled cursor
+          >
+            {writeLoading ? "..." : t("등록하기", "提交")}
+          </button>
+          {(!writeCat || !writeTag) && (
+            <p style={{ textAlign: "center", fontSize: 11, color: "#C0392B", marginTop: 6 }}>{t("게시판과 말머리를 선택해주세요", "请选择版块和标签")}</p>
+          )}
         </div>
-
-        <button onClick={handleWriteSubmit} disabled={writeLoading || !writeCat || !writeTag || !writeTitle.trim() || !writeContent.trim()}
-          style={{ width: "100%", background: writeCat && writeTag && writeTitle.trim() && writeContent.trim() ? "#C0392B" : "#ddd", color: "#fff", border: "none", borderRadius: 10, padding: "13px", fontSize: 15, fontWeight: 700, cursor: "pointer", opacity: writeLoading ? 0.7 : 1 }}>
-          {writeLoading ? "..." : t("등록하기", "提交")}
-        </button>
-        {(!writeCat || !writeTag) && <p style={{ textAlign: "center", fontSize: 11, color: "#C0392B", marginTop: 6 }}>{t("게시판과 말머리를 선택해주세요", "请选择版块和标签")}</p>}
       </div>
-    </div>
-  );
+    );
+  };
 
   // ── 글 상세 ──
   const DetailView = () => {
@@ -577,11 +633,11 @@ export default function ZaihanLife() {
             <textarea
               value={commentInput} onChange={e => setCommentInput(e.target.value)}
               placeholder={user ? t("댓글을 입력하세요", "请输入评论") : t("댓글을 입력하세요 (로그인 필요)", "请输入评论（需要登录）")}
-              style={{ width: "100%", border: "1px solid #ddd", borderRadius: 6, padding: 10, fontSize: 13, resize: "none", height: 72, boxSizing: "border-box", fontFamily: "inherit", background: "#fff" }}
+              style={{ ...INPUT_STYLE, resize: "none", height: 72, background: "#fff" }}
             />
             <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
               <button onClick={handleCommentSubmit} disabled={commentLoading}
-                style={{ background: "#C0392B", color: "#fff", border: "none", borderRadius: 6, padding: "8px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: commentLoading ? 0.7 : 1 }}>
+                style={{ background: "#C0392B", color: "#fff", border: "none", borderRadius: 6, padding: "8px 18px", fontSize: 13, fontWeight: 700, cursor: commentLoading ? "not-allowed" : "pointer", opacity: commentLoading ? 0.7 : 1 }}>
                 {commentLoading ? "..." : t("등록", "提交")}
               </button>
             </div>
@@ -593,7 +649,7 @@ export default function ZaihanLife() {
 
   return (
     <div style={{ fontFamily: "'Noto Sans KR','Noto Sans SC','Apple SD Gothic Neo',sans-serif", background: "#F5F5F5", minHeight: "100vh", maxWidth: 480, margin: "0 auto" }}>
-      <Header />
+      {Header()}
 
       {showAuth && AuthModal()}
       {view === "write"  && WriteView()}
@@ -606,7 +662,7 @@ export default function ZaihanLife() {
               <input
                 value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
                 placeholder={t("검색어를 입력하세요", "请输入搜索内容")}
-                style={{ width: "100%", border: "1px solid #ddd", borderRadius: 8, padding: "8px 36px 8px 12px", fontSize: 13, boxSizing: "border-box", fontFamily: "inherit", background: "#F8F8F8", outline: "none" }}
+                style={{ ...INPUT_STYLE, padding: "8px 36px 8px 12px", background: "#F8F8F8" }}
               />
               <span style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", fontSize: 15 }}>🔍</span>
             </div>
@@ -614,8 +670,8 @@ export default function ZaihanLife() {
 
           {(selectedCategory === "all" || selectedCategory === "popular") && (
             <>
-              <Banner />
-              <Shortcuts />
+              {Banner()}
+              {Shortcuts()}
             </>
           )}
 
@@ -672,9 +728,10 @@ export default function ZaihanLife() {
             )}
           </div>
 
-          {/* 글쓰기 FAB */}
-          <button onClick={() => user ? setView("write") : setShowAuth(true)}
-            style={{ position: "fixed", bottom: 24, right: "calc(50% - 240px + 16px)", background: "#C0392B", color: "#fff", border: "none", borderRadius: 28, padding: "13px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 16px rgba(192,57,43,0.45)", display: "flex", alignItems: "center", gap: 6, zIndex: 200 }}>
+          {/* [fix] FAB 위치: max()로 모바일에서 음수 방지 */}
+          <button
+            onClick={() => { if (user) { window.scrollTo(0, 0); setView("write"); } else setShowAuth(true); }}
+            style={{ position: "fixed", bottom: 24, right: "max(16px, calc(50% - 224px))", background: "#C0392B", color: "#fff", border: "none", borderRadius: 28, padding: "13px 20px", fontSize: 14, fontWeight: 700, cursor: "pointer", boxShadow: "0 4px 16px rgba(192,57,43,0.45)", display: "flex", alignItems: "center", gap: 6, zIndex: 200 }}>
             ✏️ {t("글쓰기", "发帖")}
           </button>
         </div>
