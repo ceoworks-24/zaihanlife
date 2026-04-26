@@ -242,28 +242,27 @@ export default function ZaihanLife() {
     setAuthLoading(true);
 
     if (authMode === "signup") {
-      const { data, error } = await supabase.auth.signUp({
-        email: authEmail,
-        password: authPassword,
-        options: { data: { nickname: authNickname } },
-      });
+      const params = { email: authEmail.trim(), password: authPassword, options: { data: { nickname: authNickname.trim() } } };
+      console.log("[signUp params]", { email: params.email, passwordLength: params.password.length, nickname: params.options.data.nickname });
+
+      const { data, error } = await supabase.auth.signUp(params);
+      console.log("[signUp result]", { data, error });
+
       if (error) {
-        setAuthError(t("회원가입에 실패했습니다. 다시 시도해주세요.", "注册失败，请重试。"));
+        setAuthError(`${error.message} (${error.status ?? error.code ?? ""})`);
       } else if (data.session) {
-        // Confirm email OFF: 세션이 바로 발급되므로 즉시 로그인 처리
         setShowAuth(false);
         setAuthEmail(""); setAuthPassword(""); setAuthNickname("");
       } else {
-        // Confirm email ON: 이메일 인증 안내
         setAuthError(t("인증 이메일을 확인해주세요!", "请查看验证邮件！"));
       }
     } else {
       const { error } = await supabase.auth.signInWithPassword({
-        email: authEmail,
+        email: authEmail.trim(),
         password: authPassword,
       });
       if (error) {
-        setAuthError(t("이메일 또는 비밀번호가 틀렸습니다.", "邮箱或密码错误。"));
+        setAuthError(`${error.message} (${error.status ?? error.code ?? ""})`);
       } else {
         setShowAuth(false);
         setAuthEmail(""); setAuthPassword(""); setAuthNickname("");
