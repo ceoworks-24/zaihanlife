@@ -123,9 +123,7 @@ export default function ZaihanLife() {
   const [authError, setAuthError] = useState("");
   const backdropPointerDownTarget = useRef(null); // [fix] onPointerDown으로 변경 (모바일 터치 호환)
 
-  // [fix] fetchPosts 경쟁 조건 방지 — 가장 최근 요청 id만 상태 반영
-  const fetchCountRef = useRef(0);
-  // [fix] 검색 debounce 타이머
+  // 검색 debounce 타이머
   const searchTimerRef = useRef(null);
 
   const t = (ko, zh) => lang === "ko" ? ko : zh;
@@ -144,7 +142,6 @@ export default function ZaihanLife() {
     if (data) {
       setUserProfile(data);
     } else {
-      // profiles 행이 없으면 생성 (FK 오류 방지)
       const nickname = fallbackNickname || userId.slice(0, 8);
       const { error: upsertError } = await supabase
         .from("profiles").upsert({ id: userId, nickname });
@@ -172,44 +169,38 @@ export default function ZaihanLife() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // ── 카테고리/정렬 변경 시 즉시 로드 ──
-  useEffect(() => {
-    fetchPosts();
-  }, [selectedCategory, sortBy]);
-
-  // ── 검색어 변경 시 debounce 400ms ──
-  useEffect(() => {
-    clearTimeout(searchTimerRef.current);
-    searchTimerRef.current = setTimeout(fetchPosts, 400);
-    return () => clearTimeout(searchTimerRef.current);
-  }, [searchQuery]);
-
-  // [fix] 경쟁 조건 방지: 요청 id가 현재 최신인 경우에만 상태 업데이트
-  const fetchPosts = async () => {
-    const id = ++fetchCountRef.current;
+  // ── fetchPosts: 카테고리/정렬 변경 시 즉시, 검색어 변경 시 400ms 디바운스 ──
+  const fetchPosts = async (cat, sort, query) => {
     setLoading(true);
-
-    let query = supabase.from("posts").select("*, profiles(nickname)");
-
-    if (selectedCategory === "popular") {
-      query = query.order("like_count", { ascending: false });
+    let q = supabase.from("posts").select("*, profiles(nickname)");
+    if (cat === "popular") {
+      q = q.order("like_count", { ascending: false });
     } else {
-      if (selectedCategory !== "all") {
-        query = query.eq("category", selectedCategory);
-      }
-      if (searchQuery.trim()) {
-        query = query.ilike("title", `%${searchQuery}%`);
-      }
-      if (sortBy === "views")       query = query.order("view_count",  { ascending: false });
-      else if (sortBy === "likes")  query = query.order("like_count",  { ascending: false });
-      else                          query = query.order("created_at", { ascending: false });
+      if (cat !== "all") q = q.eq("category", cat);
+      if (query.trim()) q = q.ilike("title", `%${query}%`);
+      if (sort === "views")      q = q.order("view_count",  { ascending: false });
+      else if (sort === "likes") q = q.order("like_count",  { ascending: false });
+      else                       q = q.order("created_at",  { ascending: false });
     }
-
-    const { data, error } = await query;
-    if (id !== fetchCountRef.current) return; // 오래된 응답 무시
-    if (!error) setPosts(data || []);
+    const { data, error } = await q;
+    if (error) console.error("[fetchPosts error]", error);
+    setPosts(data || []);
     setLoading(false);
   };
+
+  useEffect(() => {
+    clearTimeout(searchTimerRef.current);
+    if (searchQuery.trim()) {
+      // 검색어 입력: 400ms 디바운스
+      searchTimerRef.current = setTimeout(
+        () => fetchPosts(selectedCategory, sortBy, searchQuery),
+        400
+      );
+      return () => clearTimeout(searchTimerRef.current);
+    }
+    // 카테고리/정렬 변경 or 검색어 지움: 즉시 로드
+    fetchPosts(selectedCategory, sortBy, searchQuery);
+  }, [selectedCategory, sortBy, searchQuery]);
 
   // ── 게시글 열기 ──
   const openPost = async (post) => {
@@ -234,7 +225,7 @@ export default function ZaihanLife() {
     setView("home");
     setSelectedPost(null);
     setReplies([]);
-    fetchPosts();
+    fetchPosts(selectedCategory, sortBy, searchQuery);
   };
 
   const handleShortcut = (id) => {
@@ -698,7 +689,7 @@ export default function ZaihanLife() {
       {view === "detail" && selectedPost && DetailView()}
       {view === "home"   && (
         <div>
-          {/* 검색바 */}
+              {/* 검색바 */}
           <div style={{ padding: "10px 16px", background: "#fff", borderBottom: "1px solid #eee" }}>
             <div style={{ position: "relative" }}>
               <input
