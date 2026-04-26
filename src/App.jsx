@@ -136,23 +136,38 @@ export default function ZaihanLife() {
     return () => clearInterval(timerRef.current);
   }, []);
 
-  // ── profiles 테이블에서 닉네임 fetch ──
-  const fetchUserProfile = async (userId) => {
+  // ── profiles 조회 + 없으면 자동 생성 ──
+  const ensureUserProfile = async (userId, fallbackNickname) => {
     if (!userId) { setUserProfile(null); return; }
-    const { data, error } = await supabase.from("profiles").select("nickname").eq("id", userId).single();
-    if (error) console.error("[fetchUserProfile]", error.message);
-    setUserProfile(data ?? null);
+    const { data, error } = await supabase
+      .from("profiles").select("nickname").eq("id", userId).single();
+    if (data) {
+      setUserProfile(data);
+    } else {
+      // profiles 행이 없으면 생성 (FK 오류 방지)
+      const nickname = fallbackNickname || userId.slice(0, 8);
+      const { error: upsertError } = await supabase
+        .from("profiles").upsert({ id: userId, nickname });
+      if (upsertError) console.error("[profiles upsert]", upsertError.message);
+      else setUserProfile({ nickname });
+    }
   };
 
   // ── Auth 상태 감지 ──
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
-      fetchUserProfile(session?.user?.id ?? null);
+      ensureUserProfile(
+        session?.user?.id ?? null,
+        session?.user?.user_metadata?.nickname ?? null
+      );
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
-      fetchUserProfile(session?.user?.id ?? null);
+      ensureUserProfile(
+        session?.user?.id ?? null,
+        session?.user?.user_metadata?.nickname ?? null
+      );
     });
     return () => subscription.unsubscribe();
   }, []);
@@ -262,13 +277,7 @@ export default function ZaihanLife() {
       if (error) {
         setAuthError(`${error.message} (${error.status ?? error.code ?? ""})`);
       } else if (data.session) {
-        // profiles 테이블에 nickname 행 생성
-        const { error: profileError } = await supabase.from("profiles").upsert({
-          id: data.user.id,
-          nickname: authNickname.trim(),
-        });
-        if (profileError) console.error("[profiles upsert]", profileError.message);
-        else await fetchUserProfile(data.user.id);
+        // ensureUserProfile이 onAuthStateChange에서 자동 호출됨
         setShowAuth(false);
         setAuthEmail(""); setAuthPassword(""); setAuthNickname("");
       } else {
@@ -282,6 +291,7 @@ export default function ZaihanLife() {
       if (error) {
         setAuthError(`${error.message} (${error.status ?? error.code ?? ""})`);
       } else {
+        // ensureUserProfile이 onAuthStateChange에서 자동 호출됨
         setShowAuth(false);
         setAuthEmail(""); setAuthPassword(""); setAuthNickname("");
       }
