@@ -226,8 +226,20 @@ export default function ZaihanLife() {
   // ── 로그인 / 회원가입 ──
   const handleAuth = async (e) => {
     e.preventDefault();
-    setAuthLoading(true);
     setAuthError("");
+
+    // 클라이언트 사전 검증 — 422 방지
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(authEmail)) {
+      setAuthError(t("올바른 이메일 형식이 아닙니다.", "邮箱格式不正确。"));
+      return;
+    }
+    if (authPassword.length < 6) {
+      setAuthError(t("비밀번호는 6자 이상이어야 합니다.", "密码至少需要6位。"));
+      return;
+    }
+
+    setAuthLoading(true);
 
     if (authMode === "signup") {
       const { data, error } = await supabase.auth.signUp({
