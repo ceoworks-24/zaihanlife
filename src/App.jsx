@@ -302,7 +302,7 @@ export default function ZaihanLife() {
       title_zh: writeTitle,
       content: writeContent,
       content_zh: writeContent,
-      author_id: session.user.id,
+      user_id: session.user.id,
       author_name: nickname,
       views: 0,
       likes: 0,
@@ -329,12 +329,12 @@ export default function ZaihanLife() {
 
     const { data, error } = await supabase.from("replies").insert({
       post_id: selectedPost.id,
-      author_id: user.id,
+      user_id: user.id,
       author_name: nickname,
       content: commentInput,
       content_zh: commentInput,
       likes: 0,
-      is_author: selectedPost.author_id === user.id,
+      is_author: selectedPost.user_id === user.id,
     }).select().single();
 
     if (!error && data) {
