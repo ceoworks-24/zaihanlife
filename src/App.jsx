@@ -116,6 +116,7 @@ export default function ZaihanLife() {
   const [authNickname, setAuthNickname] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState("");
+  const backdropMouseDownTarget = useRef(null);
 
   const t = (ko, zh) => lang === "ko" ? ko : zh;
 
@@ -307,7 +308,8 @@ export default function ZaihanLife() {
   // ── Auth 모달 ──
   const AuthModal = () => (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-      onClick={e => { if (e.target === e.currentTarget) { setShowAuth(false); setAuthError(""); } }}>
+      onMouseDown={e => { backdropMouseDownTarget.current = e.target; }}
+      onClick={e => { if (e.target === e.currentTarget && backdropMouseDownTarget.current === e.currentTarget) { setShowAuth(false); setAuthError(""); } }}>
       <div style={{ background: "#fff", borderRadius: 16, padding: 24, width: "100%", maxWidth: 360 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
           <span style={{ fontSize: 17, fontWeight: 700, color: "#1a1a1a" }}>
