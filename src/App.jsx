@@ -172,7 +172,7 @@ export default function ZaihanLife() {
   // ── fetchPosts: 카테고리/정렬 변경 시 즉시, 검색어 변경 시 400ms 디바운스 ──
   const fetchPosts = async (cat, sort, query) => {
     setLoading(true);
-    let q = supabase.from("posts").select("*, profiles(nickname)");
+    let q = supabase.from("posts").select("*, profiles!posts_user_id_fkey(nickname)");
     if (cat === "popular") {
       q = q.order("like_count", { ascending: false });
     } else {
@@ -213,8 +213,8 @@ export default function ZaihanLife() {
     setSelectedPost(prev => ({ ...prev, view_count: (prev?.view_count || 0) + 1 }));
 
     const { data } = await supabase
-      .from("replies")
-      .select("*, profiles(nickname)")
+      .from("comments")
+      .select("*, profiles!comments_user_id_fkey(nickname)")
       .eq("post_id", post.id)
       .order("created_at", { ascending: true });
     setReplies(data || []);
@@ -337,13 +337,13 @@ export default function ZaihanLife() {
     if (!commentInput.trim() || !selectedPost) return;
     setCommentLoading(true);
 
-    const { data, error } = await supabase.from("replies").insert({
+    const { data, error } = await supabase.from("comments").insert({
       post_id: selectedPost.id,
       user_id: user.id,
       content: commentInput,
       like_count: 0,
       is_author: selectedPost.user_id === user.id,
-    }).select("*, profiles(nickname)").single();
+    }).select("*, profiles!comments_user_id_fkey(nickname)").single();
 
     if (!error && data) {
       setReplies(prev => [...prev, data]);
