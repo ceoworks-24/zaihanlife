@@ -95,6 +95,7 @@ export default function ZaihanLife() {
 
   // Supabase data
   const [user, setUser] = useState(null);
+  const [userProfile, setUserProfile] = useState(null);
   const [posts, setPosts] = useState([]);
   const [replies, setReplies] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -135,13 +136,22 @@ export default function ZaihanLife() {
     return () => clearInterval(timerRef.current);
   }, []);
 
+  // ── profiles 테이블에서 닉네임 fetch ──
+  const fetchUserProfile = async (userId) => {
+    if (!userId) { setUserProfile(null); return; }
+    const { data } = await supabase.from("profiles").select("nickname").eq("id", userId).single();
+    setUserProfile(data ?? null);
+  };
+
   // ── Auth 상태 감지 ──
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setUser(session?.user ?? null);
+      fetchUserProfile(session?.user?.id ?? null);
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
+      fetchUserProfile(session?.user?.id ?? null);
     });
     return () => subscription.unsubscribe();
   }, []);
@@ -163,7 +173,7 @@ export default function ZaihanLife() {
     const id = ++fetchCountRef.current;
     setLoading(true);
 
-    let query = supabase.from("posts").select("*");
+    let query = supabase.from("posts").select("*, profiles(nickname)");
 
     if (selectedCategory === "popular") {
       query = query.order("likes", { ascending: false });
@@ -197,7 +207,7 @@ export default function ZaihanLife() {
 
     const { data } = await supabase
       .from("replies")
-      .select("*")
+      .select("*, profiles(nickname)")
       .eq("post_id", post.id)
       .order("created_at", { ascending: true });
     setReplies(data || []);
@@ -291,10 +301,6 @@ export default function ZaihanLife() {
       return;
     }
 
-    const nickname = writeAnon
-      ? t("익명", "匿名")
-      : (user.user_metadata?.nickname || user.email?.split("@")[0] || t("익명", "匿名"));
-
     const { error } = await supabase.from("posts").insert({
       category: writeCat,
       tag: writeTag,
@@ -303,7 +309,6 @@ export default function ZaihanLife() {
       content: writeContent,
       content_zh: writeContent,
       user_id: session.user.id,
-      author_name: nickname,
       views: 0,
       likes: 0,
       comments_count: 0,
@@ -325,17 +330,14 @@ export default function ZaihanLife() {
     if (!commentInput.trim() || !selectedPost) return;
     setCommentLoading(true);
 
-    const nickname = user.user_metadata?.nickname || user.email?.split("@")[0] || t("익명", "匿名");
-
     const { data, error } = await supabase.from("replies").insert({
       post_id: selectedPost.id,
       user_id: user.id,
-      author_name: nickname,
       content: commentInput,
       content_zh: commentInput,
       likes: 0,
       is_author: selectedPost.user_id === user.id,
-    }).select().single();
+    }).select("*, profiles(nickname)").single();
 
     if (!error && data) {
       setReplies(prev => [...prev, data]);
@@ -442,7 +444,7 @@ export default function ZaihanLife() {
           {user ? (
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <span style={{ fontSize: 12, color: "#444", fontWeight: 600 }}>
-                {user.user_metadata?.nickname || user.email?.split("@")[0]}
+                {userProfile?.nickname || user.email?.split("@")[0]}
               </span>
               <button onClick={handleLogout}
                 style={{ background: "#F5F5F5", color: "#666", border: "1px solid #ddd", borderRadius: 6, padding: "6px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
@@ -600,10 +602,10 @@ export default function ZaihanLife() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: 12, borderBottom: "1px solid #eee" }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#C0392B", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700 }}>
-                {(post.author_name || "?")[0]}
+                {(post.profiles?.nickname || "?")[0]}
               </div>
               <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>{post.author_name}</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>{post.profiles?.nickname || t("알 수 없음", "未知")}</div>
                 <div style={{ fontSize: 11, color: "#999" }}>{formatDate(post.created_at)}</div>
               </div>
             </div>
@@ -639,7 +641,7 @@ export default function ZaihanLife() {
             <div key={reply.id} style={{ padding: "12px", background: reply.is_author ? "#FFF8F8" : "#FAFAFA", borderRadius: 8, marginBottom: 8, border: reply.is_author ? "1px solid #FFCDD2" : "1px solid #eee" }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: reply.is_author ? "#C0392B" : "#333" }}>
-                  {reply.author_name}
+                  {reply.profiles?.nickname || t("알 수 없음", "未知")}
                   {reply.is_author && <span style={{ fontSize: 10, background: "#C0392B", color: "#fff", padding: "1px 5px", borderRadius: 3, marginLeft: 4 }}>{t("작성자", "作者")}</span>}
                 </span>
                 <span style={{ fontSize: 11, color: "#999" }}>{formatDate(reply.created_at)}</span>
@@ -741,7 +743,7 @@ export default function ZaihanLife() {
                     {lang === "ko" ? post.title : (post.title_zh || post.title)}
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: 11, color: "#999" }}>{post.author_name} · {formatDate(post.created_at)}</span>
+                    <span style={{ fontSize: 11, color: "#999" }}>{post.profiles?.nickname || t("알 수 없음", "未知")} · {formatDate(post.created_at)}</span>
                     <div style={{ display: "flex", gap: 8, fontSize: 11, color: "#999" }}>
                       <span>👁 {(post.views || 0).toLocaleString()}</span>
                       <span>👍 {post.likes || 0}</span>
