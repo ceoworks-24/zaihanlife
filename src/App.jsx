@@ -113,6 +113,10 @@ export default function ZaihanLife() {
   const [commentInput, setCommentInput] = useState("");
   const [commentLoading, setCommentLoading] = useState(false);
 
+  // Delete
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+
   // Auth modal
   const [showAuth, setShowAuth] = useState(false);
   const [authMode, setAuthMode] = useState("login");
@@ -133,6 +137,24 @@ export default function ZaihanLife() {
     row.user_id
       ? (row.profiles?.nickname || "?")
       : t("익명", "匿名");
+
+  const ADMIN_EMAIL = "problemcompany1@naver.com";
+  const canDelete = (post) =>
+    user && (user.email === ADMIN_EMAIL || (post.user_id && post.user_id === user.id));
+
+  const handleDeletePost = async () => {
+    if (!selectedPost) return;
+    setDeleteLoading(true);
+    const { error } = await supabase.from("posts").delete().eq("id", selectedPost.id);
+    setDeleteLoading(false);
+    if (error) {
+      console.error("[delete post]", error);
+      alert(t("삭제에 실패했습니다.", "删除失败。"));
+    } else {
+      setShowDeleteConfirm(false);
+      goHome();
+    }
+  };
 
   // ── 배너 타이머 ──
   useEffect(() => {
@@ -600,10 +622,48 @@ export default function ZaihanLife() {
     const post = selectedPost;
     return (
       <div style={{ background: "#fff", minHeight: "100vh" }}>
+        {/* ── 삭제 확인 팝업 ── */}
+        {showDeleteConfirm && (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+            <div style={{ background: "#fff", borderRadius: 16, padding: 24, width: "100%", maxWidth: 320, textAlign: "center" }}>
+              <div style={{ fontSize: 32, marginBottom: 12 }}>🗑️</div>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#1a1a1a", marginBottom: 8 }}>
+                {t("게시글을 삭제할까요?", "确定要删除这篇帖子吗？")}
+              </div>
+              <div style={{ fontSize: 13, color: "#888", marginBottom: 24 }}>
+                {t("삭제된 글은 복구할 수 없습니다.", "删除后无法恢复。")}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => setShowDeleteConfirm(false)}
+                  disabled={deleteLoading}
+                  style={{ flex: 1, padding: "11px", borderRadius: 10, border: "1px solid #ddd", background: "#F5F5F5", fontSize: 14, fontWeight: 600, color: "#666", cursor: "pointer" }}>
+                  {t("취소", "取消")}
+                </button>
+                <button
+                  onClick={handleDeletePost}
+                  disabled={deleteLoading}
+                  style={{ flex: 1, padding: "11px", borderRadius: 10, border: "none", background: "#C0392B", fontSize: 14, fontWeight: 700, color: "#fff", cursor: deleteLoading ? "not-allowed" : "pointer", opacity: deleteLoading ? 0.7 : 1 }}>
+                  {deleteLoading ? "..." : t("삭제", "删除")}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div style={{ padding: "16px 16px 0" }}>
-          <button onClick={goHome} style={{ background: "none", border: "none", cursor: "pointer", color: "#C0392B", fontSize: 13, fontWeight: 600, padding: 0, marginBottom: 12 }}>
-            ← {t("목록으로", "返回列表")}
-          </button>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <button onClick={goHome} style={{ background: "none", border: "none", cursor: "pointer", color: "#C0392B", fontSize: 13, fontWeight: 600, padding: 0 }}>
+              ← {t("목록으로", "返回列表")}
+            </button>
+            {canDelete(post) && (
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                style={{ background: "none", border: "1px solid #ddd", borderRadius: 6, padding: "5px 12px", fontSize: 12, fontWeight: 600, color: "#999", cursor: "pointer" }}>
+                {t("삭제", "删除")}
+              </button>
+            )}
+          </div>
           <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
             <CatBadge catId={post.category} />
             <TagBadge tag={post.tag} />
