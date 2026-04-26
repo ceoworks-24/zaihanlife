@@ -139,7 +139,8 @@ export default function ZaihanLife() {
   // ── profiles 테이블에서 닉네임 fetch ──
   const fetchUserProfile = async (userId) => {
     if (!userId) { setUserProfile(null); return; }
-    const { data } = await supabase.from("profiles").select("nickname").eq("id", userId).single();
+    const { data, error } = await supabase.from("profiles").select("nickname").eq("id", userId).single();
+    if (error) console.error("[fetchUserProfile]", error.message);
     setUserProfile(data ?? null);
   };
 
@@ -261,6 +262,13 @@ export default function ZaihanLife() {
       if (error) {
         setAuthError(`${error.message} (${error.status ?? error.code ?? ""})`);
       } else if (data.session) {
+        // profiles 테이블에 nickname 행 생성
+        const { error: profileError } = await supabase.from("profiles").upsert({
+          id: data.user.id,
+          nickname: authNickname.trim(),
+        });
+        if (profileError) console.error("[profiles upsert]", profileError.message);
+        else await fetchUserProfile(data.user.id);
         setShowAuth(false);
         setAuthEmail(""); setAuthPassword(""); setAuthNickname("");
       } else {
@@ -441,7 +449,7 @@ export default function ZaihanLife() {
           {user ? (
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <span style={{ fontSize: 12, color: "#444", fontWeight: 600 }}>
-                {userProfile?.nickname || user.email?.split("@")[0]}
+                {userProfile?.nickname || user.user_metadata?.nickname || user.email?.split("@")[0]}
               </span>
               <button onClick={handleLogout}
                 style={{ background: "#F5F5F5", color: "#666", border: "1px solid #ddd", borderRadius: 6, padding: "6px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
