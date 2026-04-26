@@ -593,9 +593,9 @@ export default function ZaihanLife() {
     <div style={{ fontFamily: "'Noto Sans KR','Noto Sans SC','Apple SD Gothic Neo',sans-serif", background: "#F5F5F5", minHeight: "100vh", maxWidth: 480, margin: "0 auto" }}>
       <Header />
 
-      {showAuth && <AuthModal />}
-      {view === "write"  && <WriteView />}
-      {view === "detail" && selectedPost && <DetailView />}
+      {showAuth && AuthModal()}
+      {view === "write"  && WriteView()}
+      {view === "detail" && selectedPost && DetailView()}
       {view === "home"   && (
         <div>
           {/* 검색바 */}
