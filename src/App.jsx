@@ -176,7 +176,7 @@ export default function ZaihanLife() {
     let query = supabase.from("posts").select("*, profiles(nickname)");
 
     if (selectedCategory === "popular") {
-      query = query.order("likes", { ascending: false });
+      query = query.order("like_count", { ascending: false });
     } else {
       if (selectedCategory !== "all") {
         query = query.eq("category", selectedCategory);
@@ -184,8 +184,8 @@ export default function ZaihanLife() {
       if (searchQuery.trim()) {
         query = query.ilike("title", `%${searchQuery}%`);
       }
-      if (sortBy === "views")       query = query.order("views",      { ascending: false });
-      else if (sortBy === "likes")  query = query.order("likes",      { ascending: false });
+      if (sortBy === "views")       query = query.order("view_count",  { ascending: false });
+      else if (sortBy === "likes")  query = query.order("like_count",  { ascending: false });
       else                          query = query.order("created_at", { ascending: false });
     }
 
@@ -202,8 +202,8 @@ export default function ZaihanLife() {
     setView("detail");
     setReplies([]);
 
-    await supabase.from("posts").update({ views: (post.views || 0) + 1 }).eq("id", post.id);
-    setSelectedPost(prev => ({ ...prev, views: (prev?.views || 0) + 1 }));
+    await supabase.from("posts").update({ view_count: (post.view_count || 0) + 1 }).eq("id", post.id);
+    setSelectedPost(prev => ({ ...prev, view_count: (prev?.view_count || 0) + 1 }));
 
     const { data } = await supabase
       .from("replies")
@@ -307,8 +307,8 @@ export default function ZaihanLife() {
       title: writeTitle,
       content: writeContent,
       user_id: session.user.id,
-      views: 0,
-      likes: 0,
+      view_count: 0,
+      like_count: 0,
       comment_count: 0,
     });
 
@@ -332,7 +332,7 @@ export default function ZaihanLife() {
       post_id: selectedPost.id,
       user_id: user.id,
       content: commentInput,
-      likes: 0,
+      like_count: 0,
       is_author: selectedPost.user_id === user.id,
     }).select("*, profiles(nickname)").single();
 
@@ -607,8 +607,8 @@ export default function ZaihanLife() {
               </div>
             </div>
             <div style={{ display: "flex", gap: 10, fontSize: 11, color: "#999" }}>
-              <span>👁 {(post.views || 0).toLocaleString()}</span>
-              <span>👍 {post.likes || 0}</span>
+              <span>👁 {(post.view_count || 0).toLocaleString()}</span>
+              <span>👍 {post.like_count || 0}</span>
               <span>💬 {post.comment_count || 0}</span>
             </div>
           </div>
@@ -622,7 +622,7 @@ export default function ZaihanLife() {
 
         <div style={{ padding: "14px 16px", display: "flex", gap: 8, borderBottom: "8px solid #F5F5F5" }}>
           <button style={{ flex: 1, background: "#FEF0EF", border: "1px solid #FCCBC8", borderRadius: 8, padding: "10px", fontSize: 13, fontWeight: 700, color: "#C0392B", cursor: "pointer" }}>
-            👍 {t("추천", "推荐")} {post.likes || 0}
+            👍 {t("추천", "推荐")} {post.like_count || 0}
           </button>
           <button style={{ flex: 1, background: "#F5F5F5", border: "1px solid #ddd", borderRadius: 8, padding: "10px", fontSize: 13, fontWeight: 700, color: "#666", cursor: "pointer" }}>
             🔖 {t("북마크", "收藏")}
@@ -647,7 +647,7 @@ export default function ZaihanLife() {
                 {reply.content}
               </p>
               <div style={{ marginTop: 6, fontSize: 11, color: "#999", display: "flex", gap: 10 }}>
-                <span style={{ cursor: "pointer" }}>👍 {reply.likes || 0}</span>
+                <span style={{ cursor: "pointer" }}>👍 {reply.like_count || 0}</span>
                 <span style={{ cursor: "pointer" }}>↩ {t("답글", "回复")}</span>
               </div>
             </div>
@@ -742,8 +742,8 @@ export default function ZaihanLife() {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <span style={{ fontSize: 11, color: "#999" }}>{post.profiles?.nickname || t("알 수 없음", "未知")} · {formatDate(post.created_at)}</span>
                     <div style={{ display: "flex", gap: 8, fontSize: 11, color: "#999" }}>
-                      <span>👁 {(post.views || 0).toLocaleString()}</span>
-                      <span>👍 {post.likes || 0}</span>
+                      <span>👁 {(post.view_count || 0).toLocaleString()}</span>
+                      <span>👍 {post.like_count || 0}</span>
                       <span>💬 {post.comment_count || 0}</span>
                     </div>
                   </div>
