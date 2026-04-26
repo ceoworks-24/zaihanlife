@@ -128,6 +128,12 @@ export default function ZaihanLife() {
 
   const t = (ko, zh) => lang === "ko" ? ko : zh;
 
+  // 작성자명: user_id 없으면 "익명"/"匿名", 있으면 닉네임 (없으면 "?")
+  const getAuthor = (row) =>
+    row.user_id
+      ? (row.profiles?.nickname || "?")
+      : t("익명", "匿名");
+
   // ── 배너 타이머 ──
   useEffect(() => {
     timerRef.current = setInterval(() => setBannerIdx(p => (p + 1) % BANNERS.length), 5000);
@@ -608,10 +614,10 @@ export default function ZaihanLife() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: 12, borderBottom: "1px solid #eee" }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <div style={{ width: 28, height: 28, borderRadius: "50%", background: "#C0392B", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700 }}>
-                {(post.profiles?.nickname || "?")[0]}
+                {getAuthor(post)[0]}
               </div>
               <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>{post.profiles?.nickname || t("알 수 없음", "未知")}</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#333" }}>{getAuthor(post)}</div>
                 <div style={{ fontSize: 11, color: "#999" }}>{formatDate(post.created_at)}</div>
               </div>
             </div>
@@ -647,7 +653,7 @@ export default function ZaihanLife() {
             <div key={reply.id} style={{ padding: "12px", background: reply.is_author ? "#FFF8F8" : "#FAFAFA", borderRadius: 8, marginBottom: 8, border: reply.is_author ? "1px solid #FFCDD2" : "1px solid #eee" }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: reply.is_author ? "#C0392B" : "#333" }}>
-                  {reply.profiles?.nickname || t("알 수 없음", "未知")}
+                  {getAuthor(reply)}
                   {reply.is_author && <span style={{ fontSize: 10, background: "#C0392B", color: "#fff", padding: "1px 5px", borderRadius: 3, marginLeft: 4 }}>{t("작성자", "作者")}</span>}
                 </span>
                 <span style={{ fontSize: 11, color: "#999" }}>{formatDate(reply.created_at)}</span>
@@ -749,7 +755,7 @@ export default function ZaihanLife() {
                     {post.title}
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: 11, color: "#999" }}>{post.profiles?.nickname || t("알 수 없음", "未知")} · {formatDate(post.created_at)}</span>
+                    <span style={{ fontSize: 11, color: "#999" }}>{getAuthor(post)} · {formatDate(post.created_at)}</span>
                     <div style={{ display: "flex", gap: 8, fontSize: 11, color: "#999" }}>
                       <span>👁 {(post.view_count || 0).toLocaleString()}</span>
                       <span>👍 {post.like_count || 0}</span>
