@@ -311,7 +311,7 @@ export default function ZaihanLife() {
       user_id: session.user.id,
       views: 0,
       likes: 0,
-      comments_count: 0,
+      comment_count: 0,
     });
 
     if (!error) {
@@ -343,9 +343,9 @@ export default function ZaihanLife() {
       setReplies(prev => [...prev, data]);
       setCommentInput("");
       await supabase.from("posts")
-        .update({ comments_count: (selectedPost.comments_count || 0) + 1 })
+        .update({ comment_count: (selectedPost.comment_count || 0) + 1 })
         .eq("id", selectedPost.id);
-      setSelectedPost(prev => ({ ...prev, comments_count: (prev?.comments_count || 0) + 1 }));
+      setSelectedPost(prev => ({ ...prev, comment_count: (prev?.comment_count || 0) + 1 }));
     }
     setCommentLoading(false);
   };
@@ -612,7 +612,7 @@ export default function ZaihanLife() {
             <div style={{ display: "flex", gap: 10, fontSize: 11, color: "#999" }}>
               <span>👁 {(post.views || 0).toLocaleString()}</span>
               <span>👍 {post.likes || 0}</span>
-              <span>💬 {post.comments_count || 0}</span>
+              <span>💬 {post.comment_count || 0}</span>
             </div>
           </div>
         </div>
@@ -747,7 +747,7 @@ export default function ZaihanLife() {
                     <div style={{ display: "flex", gap: 8, fontSize: 11, color: "#999" }}>
                       <span>👁 {(post.views || 0).toLocaleString()}</span>
                       <span>👍 {post.likes || 0}</span>
-                      <span>💬 {post.comments_count || 0}</span>
+                      <span>💬 {post.comment_count || 0}</span>
                     </div>
                   </div>
                 </div>
