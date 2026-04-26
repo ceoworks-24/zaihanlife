@@ -182,7 +182,7 @@ export default function ZaihanLife() {
         query = query.eq("category", selectedCategory);
       }
       if (searchQuery.trim()) {
-        query = query.or(`title.ilike.%${searchQuery}%,title_zh.ilike.%${searchQuery}%`);
+        query = query.ilike("title", `%${searchQuery}%`);
       }
       if (sortBy === "views")       query = query.order("views",      { ascending: false });
       else if (sortBy === "likes")  query = query.order("likes",      { ascending: false });
@@ -305,9 +305,7 @@ export default function ZaihanLife() {
       category: writeCat,
       tag: writeTag,
       title: writeTitle,
-      title_zh: writeTitle,
       content: writeContent,
-      content_zh: writeContent,
       user_id: session.user.id,
       views: 0,
       likes: 0,
@@ -334,7 +332,6 @@ export default function ZaihanLife() {
       post_id: selectedPost.id,
       user_id: user.id,
       content: commentInput,
-      content_zh: commentInput,
       likes: 0,
       is_author: selectedPost.user_id === user.id,
     }).select("*, profiles(nickname)").single();
@@ -597,7 +594,7 @@ export default function ZaihanLife() {
             <TagBadge tag={post.tag} />
           </div>
           <h1 style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.5, color: "#1a1a1a", margin: "0 0 12px" }}>
-            {lang === "ko" ? post.title : (post.title_zh || post.title)}
+            {post.title}
           </h1>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: 12, borderBottom: "1px solid #eee" }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -618,7 +615,7 @@ export default function ZaihanLife() {
         </div>
 
         <div style={{ padding: "16px", fontSize: 14, lineHeight: 1.9, color: "#333", borderBottom: "8px solid #F5F5F5" }}>
-          {(lang === "ko" ? post.content : (post.content_zh || post.content)).split('\n').map((line, i) =>
+          {(post.content || "").split('\n').map((line, i) =>
             <p key={i} style={{ margin: "0 0 8px" }}>{line}</p>
           )}
         </div>
@@ -647,7 +644,7 @@ export default function ZaihanLife() {
                 <span style={{ fontSize: 11, color: "#999" }}>{formatDate(reply.created_at)}</span>
               </div>
               <p style={{ fontSize: 13, color: "#444", margin: 0, lineHeight: 1.6 }}>
-                {lang === "ko" ? reply.content : (reply.content_zh || reply.content)}
+                {reply.content}
               </p>
               <div style={{ marginTop: 6, fontSize: 11, color: "#999", display: "flex", gap: 10 }}>
                 <span style={{ cursor: "pointer" }}>👍 {reply.likes || 0}</span>
@@ -740,7 +737,7 @@ export default function ZaihanLife() {
                     <TagBadge tag={post.tag} />
                   </div>
                   <div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a", lineHeight: 1.5, marginBottom: 6 }}>
-                    {lang === "ko" ? post.title : (post.title_zh || post.title)}
+                    {post.title}
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <span style={{ fontSize: 11, color: "#999" }}>{post.profiles?.nickname || t("알 수 없음", "未知")} · {formatDate(post.created_at)}</span>
