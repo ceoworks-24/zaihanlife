@@ -162,6 +162,10 @@ export default function ZaihanLife() {
   const [reportReason, setReportReason] = useState("");
   const [reportLoading, setReportLoading] = useState(false);
 
+  // Pinned notices
+  const [pinnedNotices, setPinnedNotices] = useState([]);
+  const [writePinned, setWritePinned] = useState(false);
+
   // Suggest password
   const [suggestPassword, setSuggestPassword] = useState("");
   const [showSuggestPwModal, setShowSuggestPwModal] = useState(false);
@@ -313,6 +317,23 @@ export default function ZaihanLife() {
     setNoticeLoading(false);
   };
 
+  const fetchPinnedNotices = async () => {
+    const { data } = await supabase
+      .from("posts")
+      .select("*, profiles!posts_user_id_fkey(nickname)")
+      .eq("category", "notice")
+      .eq("is_pinned", true)
+      .order("created_at", { ascending: false });
+    setPinnedNotices(data || []);
+  };
+
+  const togglePinNotice = async (post) => {
+    const newVal = !post.is_pinned;
+    await supabase.from("posts").update({ is_pinned: newVal }).eq("id", post.id);
+    setNoticePosts(prev => prev.map(p => p.id === post.id ? { ...p, is_pinned: newVal } : p));
+    fetchPinnedNotices();
+  };
+
   // ── 건의 함수 ──
   const fetchSuggestPosts = async () => {
     if (!user) return;
@@ -400,6 +421,9 @@ export default function ZaihanLife() {
     timerRef.current = setInterval(() => setBannerIdx(p => (p + 1) % BANNERS.length), 5000);
     return () => clearInterval(timerRef.current);
   }, []);
+
+  // ── 상단 고정 공지 초기 로드 ──
+  useEffect(() => { fetchPinnedNotices(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── profiles 조회 + 없으면 자동 생성 ──
   const ensureUserProfile = async (userId, fallbackNickname) => {
@@ -658,13 +682,14 @@ export default function ZaihanLife() {
       view_count: 0,
       like_count: 0,
       comment_count: 0,
+      ...(writeCat === "notice" ? { is_pinned: writePinned } : {}),
     });
 
     if (!error) {
-      setWriteTitle(""); setWriteContent(""); setWriteTag(""); setWriteAnon(false);
+      setWriteTitle(""); setWriteContent(""); setWriteTag(""); setWriteAnon(false); setWritePinned(false);
       const cat = writeCat;
       setWriteCat("");
-      if (cat === "notice") { setView("notice"); fetchNoticePosts(); }
+      if (cat === "notice") { setView("notice"); fetchNoticePosts(); fetchPinnedNotices(); }
       else goHome();
     } else {
       console.error("[글쓰기 오류]", error);
@@ -947,10 +972,17 @@ export default function ZaihanLife() {
             placeholder={t("내용을 입력하세요", "请输入内容")}
             style={{ ...INPUT_STYLE, resize: "none", height: 180, marginBottom: 10 }}
           />
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 20 }}>
-            <input type="checkbox" id="anon" checked={writeAnon} onChange={e => setWriteAnon(e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} />
-            <label htmlFor="anon" style={{ fontSize: 13, color: "#666", cursor: "pointer" }}>{t("익명으로 작성", "匿名发帖")}</label>
-          </div>
+          {isNotice ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 20 }}>
+              <input type="checkbox" id="pinned" checked={writePinned} onChange={e => setWritePinned(e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} />
+              <label htmlFor="pinned" style={{ fontSize: 13, color: "#666", cursor: "pointer" }}>📌 {t("상단 고정", "置顶")}</label>
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 20 }}>
+              <input type="checkbox" id="anon" checked={writeAnon} onChange={e => setWriteAnon(e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} />
+              <label htmlFor="anon" style={{ fontSize: 13, color: "#666", cursor: "pointer" }}>{t("익명으로 작성", "匿名发帖")}</label>
+            </div>
+          )}
 
           {writeError && (
             <p style={{ fontSize: 12, color: "#C0392B", textAlign: "center", marginBottom: 8 }}>{writeError}</p>
@@ -1216,11 +1248,20 @@ export default function ZaihanLife() {
             </div>
           ) : noticePosts.map(post => (
             <div key={post.id} onClick={() => openPost(post, "notice")}
-              style={{ background: "#fff", padding: "14px 16px", borderBottom: "1px solid #eee", cursor: "pointer" }}
-              onMouseEnter={e => e.currentTarget.style.background = "#F0F6FF"}
-              onMouseLeave={e => e.currentTarget.style.background = "#fff"}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a", lineHeight: 1.5, marginBottom: 6 }}>
-                📣 {post.title}
+              style={{ background: post.is_pinned ? "#EBF5FB" : "#fff", padding: "14px 16px", borderBottom: "1px solid #eee", cursor: "pointer" }}
+              onMouseEnter={e => e.currentTarget.style.background = post.is_pinned ? "#D6EAF8" : "#F0F6FF"}
+              onMouseLeave={e => e.currentTarget.style.background = post.is_pinned ? "#EBF5FB" : "#fff"}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: post.is_pinned ? "#1A5276" : "#1a1a1a", lineHeight: 1.5, marginBottom: 6, flex: 1 }}>
+                  {post.is_pinned ? "📌 " : "📣 "}{post.title}
+                </div>
+                {isAdmin && (
+                  <button
+                    onClick={e => { e.stopPropagation(); togglePinNotice(post); }}
+                    style={{ background: post.is_pinned ? "#AED6F1" : "#F5F5F5", border: "1px solid #ddd", borderRadius: 6, padding: "3px 8px", fontSize: 11, fontWeight: 600, color: post.is_pinned ? "#1A5276" : "#999", cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0 }}>
+                    {post.is_pinned ? t("고정 해제", "取消置顶") : t("상단 고정", "置顶")}
+                  </button>
+                )}
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span style={{ fontSize: 11, color: "#999" }}>{formatDate(post.created_at)}</span>
@@ -1389,11 +1430,8 @@ export default function ZaihanLife() {
           )}
 
           {/* 정렬 바 */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 16px", background: "#fff", borderBottom: "1px solid #eee" }}>
-            <span style={{ fontSize: 12, color: "#666", fontWeight: 600 }}>
-              {selectedCategory === "popular" ? t("👍 추천 많은 순", "👍 推荐最多") : t("최신글", "最新帖子")}
-            </span>
-            {selectedCategory !== "popular" && (
+          {selectedCategory !== "popular" && (
+            <div style={{ display: "flex", justifyContent: "flex-end", padding: "9px 16px", background: "#fff", borderBottom: "1px solid #eee" }}>
               <div style={{ display: "flex", gap: 5 }}>
                 {[{ id: "latest", ko: "최신순", zh: "最新" }, { id: "views", ko: "조회순", zh: "浏览" }, { id: "likes", ko: "추천순", zh: "推荐" }].map(s => (
                   <button key={s.id} onClick={() => setSortBy(s.id)}
@@ -1402,21 +1440,33 @@ export default function ZaihanLife() {
                   </button>
                 ))}
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* 게시글 목록 */}
           <div style={{ paddingBottom: 80 }}>
+            {/* 상단 고정 공지 */}
+            {pinnedNotices.length > 0 && pinnedNotices.map(post => (
+              <div key={`pin-${post.id}`} onClick={() => openPost(post)}
+                style={{ background: "#EBF5FB", padding: "12px 16px", borderBottom: "1px solid #AED6F1", cursor: "pointer" }}
+                onMouseEnter={e => e.currentTarget.style.background = "#D6EAF8"}
+                onMouseLeave={e => e.currentTarget.style.background = "#EBF5FB"}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#1A5276", lineHeight: 1.5 }}>
+                  📌 {post.title}
+                </div>
+                <div style={{ fontSize: 11, color: "#5D6D7E", marginTop: 4 }}>{formatDate(post.created_at)}</div>
+              </div>
+            ))}
             {loading ? (
               <div style={{ padding: 40, textAlign: "center", color: "#aaa", fontSize: 13 }}>
                 {t("불러오는 중...", "加载中...")}
               </div>
-            ) : posts.length === 0 ? (
+            ) : posts.filter(p => !pinnedNotices.some(pn => pn.id === p.id)).length === 0 && pinnedNotices.length === 0 ? (
               <div style={{ padding: 60, textAlign: "center", color: "#aaa", fontSize: 13 }}>
                 {t("아직 게시글이 없어요. 첫 글을 작성해보세요!", "还没有帖子，来发第一帖吧！")}
               </div>
             ) : (
-              posts.map(post => (
+              posts.filter(p => !pinnedNotices.some(pn => pn.id === p.id)).map(post => (
                 <div key={post.id} onClick={() => openPost(post)}
                   style={{ background: "#fff", padding: "14px 16px", borderBottom: "1px solid #eee", cursor: "pointer" }}
                   onMouseEnter={e => e.currentTarget.style.background = "#FFFAF9"}
