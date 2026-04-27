@@ -120,6 +120,9 @@ export default function ZaihanLife() {
   // Navigation
   const [prevView, setPrevView] = useState("home");
 
+  // Likes
+  const [likedPostIds, setLikedPostIds] = useState(new Set());
+
   // Bookmark
   const [bookmarkedPostIds, setBookmarkedPostIds] = useState(new Set());
   const [bookmarkPosts, setBookmarkPosts] = useState([]);
@@ -177,6 +180,49 @@ export default function ZaihanLife() {
       setShowDeleteConfirm(false);
       goHome();
     }
+  };
+
+  // ── 추천(좋아요) 함수 ──
+  const fetchLikedPostIds = async () => {
+    if (!user) { setLikedPostIds(new Set()); return; }
+    const { data } = await supabase.from("post_likes").select("post_id").eq("user_id", user.id);
+    setLikedPostIds(new Set(data?.map(l => l.post_id) || []));
+  };
+
+  const toggleLike = async (postId) => {
+    if (!user) { setShowAuth(true); return; }
+    const isLiked = likedPostIds.has(postId);
+    const currentCount = selectedPost?.like_count || 0;
+    const newCount = Math.max(0, currentCount + (isLiked ? -1 : 1));
+
+    // Optimistic update
+    setLikedPostIds(prev => {
+      const s = new Set(prev);
+      isLiked ? s.delete(postId) : s.add(postId);
+      return s;
+    });
+    setSelectedPost(prev => prev ? { ...prev, like_count: newCount } : prev);
+
+    let error;
+    if (isLiked) {
+      ({ error } = await supabase.from("post_likes").delete().eq("user_id", user.id).eq("post_id", postId));
+    } else {
+      ({ error } = await supabase.from("post_likes").insert({ user_id: user.id, post_id: postId }));
+    }
+
+    if (error) {
+      console.error("[toggleLike]", error);
+      // Revert
+      setLikedPostIds(prev => {
+        const s = new Set(prev);
+        isLiked ? s.add(postId) : s.delete(postId);
+        return s;
+      });
+      setSelectedPost(prev => prev ? { ...prev, like_count: currentCount } : prev);
+      return;
+    }
+
+    await supabase.from("posts").update({ like_count: newCount }).eq("id", postId);
   };
 
   // ── 북마크 함수 ──
@@ -327,10 +373,15 @@ export default function ZaihanLife() {
     fetchPosts(selectedCategory, sortBy, searchQuery);
   }, [selectedCategory, sortBy, searchQuery]);
 
-  // ── 북마크 ID 동기화 ──
+  // ── 북마크/추천 ID 동기화 ──
   useEffect(() => {
-    if (user) fetchBookmarkedPostIds();
-    else setBookmarkedPostIds(new Set());
+    if (user) {
+      fetchBookmarkedPostIds();
+      fetchLikedPostIds();
+    } else {
+      setBookmarkedPostIds(new Set());
+      setLikedPostIds(new Set());
+    }
   }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── 뷰 전환 시 데이터 로드 ──
@@ -351,12 +402,24 @@ export default function ZaihanLife() {
     await supabase.from("posts").update({ view_count: (post.view_count || 0) + 1 }).eq("id", post.id);
     setSelectedPost(prev => ({ ...prev, view_count: (prev?.view_count || 0) + 1 }));
 
-    const { data } = await supabase
+    const { data: commentsData, error: commentsError } = await supabase
       .from("comments")
-      .select("*, profiles!comments_user_id_fkey(nickname)")
+      .select("*")
       .eq("post_id", post.id)
       .order("created_at", { ascending: true });
-    setReplies(data || []);
+    if (commentsError) {
+      console.error("[fetch comments]", commentsError);
+      setReplies([]);
+    } else if (commentsData?.length > 0) {
+      const userIds = [...new Set(commentsData.filter(c => c.user_id).map(c => c.user_id))];
+      const { data: profilesData } = userIds.length > 0
+        ? await supabase.from("profiles").select("id, nickname").in("id", userIds)
+        : { data: [] };
+      const profileMap = Object.fromEntries((profilesData || []).map(p => [p.id, p]));
+      setReplies(commentsData.map(c => ({ ...c, profiles: profileMap[c.user_id] || null })));
+    } else {
+      setReplies([]);
+    }
   };
 
   const goHome = () => {
@@ -513,10 +576,17 @@ export default function ZaihanLife() {
       content: commentInput,
       like_count: 0,
       is_author: selectedPost.user_id === user.id,
-    }).select("*, profiles!comments_user_id_fkey(nickname)").single();
+    }).select("*").single();
 
-    if (!error && data) {
-      setReplies(prev => [...prev, data]);
+    if (error) {
+      console.error("[comment insert]", error);
+    } else if (data) {
+      // profiles FK join 대신 이미 로드된 userProfile 활용
+      const replyWithProfile = {
+        ...data,
+        profiles: { nickname: userProfile?.nickname || user.user_metadata?.nickname || "?" },
+      };
+      setReplies(prev => [...prev, replyWithProfile]);
       setCommentInput("");
       await supabase.from("posts")
         .update({ comment_count: (selectedPost.comment_count || 0) + 1 })
@@ -847,8 +917,15 @@ export default function ZaihanLife() {
         </div>
 
         <div style={{ padding: "14px 16px", display: "flex", gap: 8, borderBottom: "8px solid #F5F5F5" }}>
-          <button style={{ flex: 1, background: "#FEF0EF", border: "1px solid #FCCBC8", borderRadius: 8, padding: "10px", fontSize: 13, fontWeight: 700, color: "#C0392B", cursor: "pointer" }}>
-            👍 {t("추천", "推荐")} {post.like_count || 0}
+          <button
+            onClick={() => toggleLike(post.id)}
+            style={{
+              flex: 1, borderRadius: 8, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer",
+              background: likedPostIds.has(post.id) ? "#C0392B" : "#FEF0EF",
+              border: `1px solid ${likedPostIds.has(post.id) ? "#C0392B" : "#FCCBC8"}`,
+              color: likedPostIds.has(post.id) ? "#fff" : "#C0392B",
+            }}>
+            👍 {t(likedPostIds.has(post.id) ? "추천함" : "추천", likedPostIds.has(post.id) ? "已推荐" : "推荐")} {post.like_count || 0}
           </button>
           <button
             onClick={() => toggleBookmark(post.id)}
