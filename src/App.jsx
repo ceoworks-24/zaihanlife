@@ -367,28 +367,17 @@ export default function ZaihanLife() {
     if (!reportReason.trim()) return;
     setReportLoading(true);
 
-    const { error: insertError } = await supabase.from("reports").insert({
+    const { error } = await supabase.from("reports").insert({
       post_id: selectedPost.id,
       reporter_id: user.id,
       reason: reportReason,
     });
 
-    if (insertError) {
-      console.error("[report insert]", insertError);
+    if (error) {
+      console.error("[report insert]", error);
       setReportLoading(false);
       return;
     }
-
-    // Edge Function으로 관리자 이메일 발송
-    const { error: fnError } = await supabase.functions.invoke("send-report-email", {
-      body: {
-        postTitle: selectedPost.title,
-        reportReason,
-        reporterEmail: user.email,
-        postId: selectedPost.id,
-      },
-    });
-    if (fnError) console.error("[report email fn]", fnError);
 
     setShowReportModal(false);
     setReportReason("");
