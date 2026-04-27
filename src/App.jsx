@@ -162,6 +162,13 @@ export default function ZaihanLife() {
   const [reportReason, setReportReason] = useState("");
   const [reportLoading, setReportLoading] = useState(false);
 
+  // Suggest password
+  const [suggestPassword, setSuggestPassword] = useState("");
+  const [showSuggestPwModal, setShowSuggestPwModal] = useState(false);
+  const [suggestPwInput, setSuggestPwInput] = useState("");
+  const [suggestPwError, setSuggestPwError] = useState("");
+  const [pendingSuggestPost, setPendingSuggestPost] = useState(null);
+
   const t = (ko, zh) => lang === "ko" ? ko : zh;
 
   // 작성자명: user_id 없으면 "익명"/"匿名", 있으면 닉네임 (없으면 "?")
@@ -232,6 +239,7 @@ export default function ZaihanLife() {
     }
 
     await supabase.from("posts").update({ like_count: newCount }).eq("id", postId);
+    setPosts(prev => prev.map(p => p.id === postId ? { ...p, like_count: newCount } : p));
   };
 
   // ── 북마크 함수 ──
@@ -329,9 +337,11 @@ export default function ZaihanLife() {
       category: "suggest", tag: "건의",
       title: suggestTitle, content: suggestContent,
       user_id: session.user.id, view_count: 0, like_count: 0, comment_count: 0,
+      password: suggestPassword.trim() || null,
     });
     if (!error) {
       setSuggestTitle(""); setSuggestContent(""); setSuggestWriteMode(false);
+      setSuggestPassword("");
       fetchSuggestPosts();
     }
     setSuggestSubmitLoading(false);
@@ -442,7 +452,7 @@ export default function ZaihanLife() {
   // ── fetchPosts: 카테고리/정렬 변경 시 즉시, 검색어 변경 시 400ms 디바운스 ──
   const fetchPosts = async (cat, sort, query) => {
     setLoading(true);
-    let q = supabase.from("posts").select("*, profiles!posts_user_id_fkey(nickname)");
+    let q = supabase.from("posts").select("*, profiles!posts_user_id_fkey(nickname)").neq("category", "suggest");
     if (cat === "popular") {
       q = q.order("like_count", { ascending: false });
     } else {
@@ -515,7 +525,7 @@ export default function ZaihanLife() {
         ? await supabase.from("profiles").select("id, nickname").in("id", userIds)
         : { data: [] };
       const profileMap = Object.fromEntries((profilesData || []).map(p => [p.id, p]));
-      setReplies(commentsData.map(c => ({ ...c, profiles: profileMap[c.user_id] || null })));
+      setReplies(commentsData.map(c => ({ ...c, is_author: c.user_id != null && c.user_id === post.user_id, profiles: profileMap[c.user_id] || null })));
     } else {
       setReplies([]);
     }
@@ -673,16 +683,15 @@ export default function ZaihanLife() {
       post_id: selectedPost.id,
       user_id: user.id,
       content: commentInput,
-      like_count: 0,
-      is_author: selectedPost.user_id === user.id,
     }).select("*").single();
 
     if (error) {
       console.error("[comment insert]", error);
+      showToast(t("댓글 등록에 실패했습니다.", "评论提交失败。"));
     } else if (data) {
-      // profiles FK join 대신 이미 로드된 userProfile 활용
       const replyWithProfile = {
         ...data,
+        is_author: selectedPost.user_id != null && selectedPost.user_id === user.id,
         profiles: { nickname: userProfile?.nickname || user.user_metadata?.nickname || "?" },
       };
       setReplies(prev => [...prev, replyWithProfile]);
@@ -693,6 +702,31 @@ export default function ZaihanLife() {
       setSelectedPost(prev => ({ ...prev, comment_count: (prev?.comment_count || 0) + 1 }));
     }
     setCommentLoading(false);
+  };
+
+  // ── 건의 비밀번호 ──
+  const handleSuggestPostClick = (post) => {
+    if (!post.password || user?.email === ADMIN_EMAIL || post.user_id === user?.id) {
+      openPost(post, "suggest");
+    } else {
+      setPendingSuggestPost(post);
+      setSuggestPwInput("");
+      setSuggestPwError("");
+      setShowSuggestPwModal(true);
+    }
+  };
+
+  const handleSuggestPwSubmit = () => {
+    if (!pendingSuggestPost) return;
+    if (suggestPwInput === pendingSuggestPost.password) {
+      setShowSuggestPwModal(false);
+      setSuggestPwInput("");
+      setSuggestPwError("");
+      openPost(pendingSuggestPost, "suggest");
+      setPendingSuggestPost(null);
+    } else {
+      setSuggestPwError(t("비밀번호가 틀렸습니다.", "密码错误。"));
+    }
   };
 
   // ── 공통 뱃지 ──
@@ -1233,6 +1267,12 @@ export default function ZaihanLife() {
               placeholder={t("건의 내용을 입력하세요", "请输入建议内容")}
               style={{ ...INPUT_STYLE, resize: "none", height: 120, marginBottom: 10 }}
             />
+            <input
+              type="password"
+              value={suggestPassword} onChange={e => setSuggestPassword(e.target.value)}
+              placeholder={t("비밀번호 설정 (선택, 미설정 시 공개)", "设置密码（可选）")}
+              style={{ ...INPUT_STYLE, marginBottom: 10 }}
+            />
             <div style={{ display: "flex", gap: 8 }}>
               <button
                 onClick={() => { setSuggestWriteMode(false); setSuggestTitle(""); setSuggestContent(""); }}
@@ -1257,7 +1297,7 @@ export default function ZaihanLife() {
               {t("작성한 건의사항이 없어요.", "暂无建议。")}
             </div>
           ) : suggestPosts.map(post => (
-            <div key={post.id} onClick={() => openPost(post, "suggest")}
+            <div key={post.id} onClick={() => handleSuggestPostClick(post)}
               style={{ background: "#fff", padding: "14px 16px", borderBottom: "1px solid #eee", cursor: "pointer" }}
               onMouseEnter={e => e.currentTarget.style.background = "#F9FFF9"}
               onMouseLeave={e => e.currentTarget.style.background = "#fff"}>
@@ -1266,7 +1306,9 @@ export default function ZaihanLife() {
                   {t("작성자", "作者")}: {getAuthor(post)}
                 </div>
               )}
-              <div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a", lineHeight: 1.5, marginBottom: 6 }}>{post.title}</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a", lineHeight: 1.5, marginBottom: 6 }}>
+                {post.password ? "🔒 " : ""}{post.title}
+              </div>
               <div style={{ fontSize: 11, color: "#999" }}>{formatDate(post.created_at)}</div>
             </div>
           ))}
@@ -1287,6 +1329,39 @@ export default function ZaihanLife() {
       )}
 
       {showAuth && AuthModal()}
+
+      {/* ── 건의 비밀번호 모달 ── */}
+      {showSuggestPwModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ background: "#fff", borderRadius: 16, padding: 24, width: "100%", maxWidth: 340 }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: "#1a1a1a", marginBottom: 6 }}>🔒 {t("비밀번호 확인", "请输入密码")}</div>
+            <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>{t("이 건의글은 비밀번호로 보호되어 있습니다.", "此建议已设置密码保护。")}</div>
+            <input
+              type="password"
+              value={suggestPwInput}
+              onChange={e => { setSuggestPwInput(e.target.value); setSuggestPwError(""); }}
+              onKeyDown={e => e.key === "Enter" && handleSuggestPwSubmit()}
+              placeholder={t("비밀번호 입력", "请输入密码")}
+              style={{ ...INPUT_STYLE, marginBottom: suggestPwError ? 6 : 14 }}
+            />
+            {suggestPwError && <p style={{ fontSize: 12, color: "#C0392B", marginBottom: 10 }}>{suggestPwError}</p>}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={() => { setShowSuggestPwModal(false); setSuggestPwInput(""); setSuggestPwError(""); setPendingSuggestPost(null); }}
+                style={{ flex: 1, padding: "11px", borderRadius: 10, border: "1px solid #ddd", background: "#F5F5F5", fontSize: 14, fontWeight: 600, color: "#666", cursor: "pointer" }}>
+                {t("취소", "取消")}
+              </button>
+              <button
+                onClick={handleSuggestPwSubmit}
+                disabled={!suggestPwInput.trim()}
+                style={{ flex: 1, padding: "11px", borderRadius: 10, border: "none", background: suggestPwInput.trim() ? "#C0392B" : "#ddd", fontSize: 14, fontWeight: 700, color: "#fff", cursor: "pointer" }}>
+                {t("확인", "确认")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {view === "write"    && WriteView()}
       {view === "detail"   && selectedPost && DetailView()}
       {view === "bookmark" && BookmarkView()}
