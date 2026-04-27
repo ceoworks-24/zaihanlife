@@ -152,6 +152,15 @@ export default function ZaihanLife() {
 
   // 검색 debounce 타이머
   const searchTimerRef = useRef(null);
+  const toastTimerRef = useRef(null);
+
+  // Toast
+  const [toastMsg, setToastMsg] = useState("");
+
+  // Report
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportReason, setReportReason] = useState("");
+  const [reportLoading, setReportLoading] = useState(false);
 
   const t = (ko, zh) => lang === "ko" ? ko : zh;
 
@@ -235,12 +244,41 @@ export default function ZaihanLife() {
   const fetchBookmarkPosts = async () => {
     if (!user) return;
     setBookmarkLoading(true);
-    const { data } = await supabase
+
+    // Step 1: 북마크된 post_id 목록 (생성순 유지)
+    const { data: bData, error: bError } = await supabase
       .from("bookmarks")
-      .select("post_id, posts!inner(*, profiles!posts_user_id_fkey(nickname))")
+      .select("post_id")
       .eq("user_id", user.id)
       .order("created_at", { ascending: false });
-    setBookmarkPosts(data?.map(b => b.posts) || []);
+
+    if (bError) {
+      console.error("[fetchBookmarkPosts]", bError);
+      setBookmarkPosts([]);
+      setBookmarkLoading(false);
+      return;
+    }
+
+    const postIds = (bData || []).map(b => b.post_id);
+    if (postIds.length === 0) {
+      setBookmarkPosts([]);
+      setBookmarkLoading(false);
+      return;
+    }
+
+    // Step 2: posts 조회
+    const { data: postsData, error: postsError } = await supabase
+      .from("posts")
+      .select("*, profiles!posts_user_id_fkey(nickname)")
+      .in("id", postIds);
+
+    if (postsError) {
+      console.error("[fetchBookmarkPosts posts]", postsError);
+      setBookmarkPosts([]);
+    } else {
+      const postMap = Object.fromEntries((postsData || []).map(p => [p.id, p]));
+      setBookmarkPosts(postIds.map(id => postMap[id]).filter(Boolean));
+    }
     setBookmarkLoading(false);
   };
 
@@ -299,6 +337,65 @@ export default function ZaihanLife() {
     setSuggestSubmitLoading(false);
   };
 
+  // ── 토스트 ──
+  const showToast = (msg) => {
+    setToastMsg(msg);
+    clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToastMsg(""), 2500);
+  };
+
+  // ── 공유하기 ──
+  const handleShare = async (postId) => {
+    const url = `${window.location.origin}${window.location.pathname}?p=${postId}`;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // 구형 브라우저 폴백
+      const el = document.createElement("textarea");
+      el.value = url;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand("copy");
+      document.body.removeChild(el);
+    }
+    showToast(t("링크가 복사됐습니다", "链接已复制"));
+  };
+
+  // ── 신고 ──
+  const handleReport = async () => {
+    if (!user) { setShowAuth(true); setShowReportModal(false); return; }
+    if (!reportReason.trim()) return;
+    setReportLoading(true);
+
+    const { error: insertError } = await supabase.from("reports").insert({
+      post_id: selectedPost.id,
+      reporter_id: user.id,
+      reason: reportReason,
+    });
+
+    if (insertError) {
+      console.error("[report insert]", insertError);
+      setReportLoading(false);
+      return;
+    }
+
+    // Edge Function으로 관리자 이메일 발송
+    const { error: fnError } = await supabase.functions.invoke("send-report-email", {
+      body: {
+        postTitle: selectedPost.title,
+        reportReason,
+        reporterEmail: user.email,
+        postId: selectedPost.id,
+      },
+    });
+    if (fnError) console.error("[report email fn]", fnError);
+
+    setShowReportModal(false);
+    setReportReason("");
+    setReportLoading(false);
+    showToast(t("신고가 접수됐습니다.", "已举报。"));
+  };
+
   // ── 배너 타이머 ──
   useEffect(() => {
     timerRef.current = setInterval(() => setBannerIdx(p => (p + 1) % BANNERS.length), 5000);
@@ -339,6 +436,19 @@ export default function ZaihanLife() {
     });
     return () => subscription.unsubscribe();
   }, []);
+
+  // ── 딥링크: ?p=<postId> 로 공유된 링크 처리 ──
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const postId = params.get("p");
+    if (!postId) return;
+    supabase
+      .from("posts")
+      .select("*, profiles!posts_user_id_fkey(nickname)")
+      .eq("id", postId)
+      .single()
+      .then(({ data }) => { if (data) openPost(data); });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── fetchPosts: 카테고리/정렬 변경 시 즉시, 검색어 변경 시 400ms 디바운스 ──
   const fetchPosts = async (cat, sort, query) => {
@@ -843,6 +953,36 @@ export default function ZaihanLife() {
     const post = selectedPost;
     return (
       <div style={{ background: "#fff", minHeight: "100vh" }}>
+        {/* ── 신고 모달 ── */}
+        {showReportModal && (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+            <div style={{ background: "#fff", borderRadius: 16, padding: 24, width: "100%", maxWidth: 340 }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#1a1a1a", marginBottom: 6 }}>🚩 {t("신고하기", "举报")}</div>
+              <div style={{ fontSize: 12, color: "#888", marginBottom: 14 }}>{t("신고 사유를 입력해주세요.", "请输入举报原因。")}</div>
+              <textarea
+                value={reportReason}
+                onChange={e => setReportReason(e.target.value)}
+                placeholder={t("예: 욕설·비방, 스팸, 허위정보 등", "例：侮辱·诽谤、垃圾信息等")}
+                style={{ ...INPUT_STYLE, resize: "none", height: 100, marginBottom: 14, fontSize: 14 }}
+              />
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={() => { setShowReportModal(false); setReportReason(""); }}
+                  disabled={reportLoading}
+                  style={{ flex: 1, padding: "11px", borderRadius: 10, border: "1px solid #ddd", background: "#F5F5F5", fontSize: 14, fontWeight: 600, color: "#666", cursor: "pointer" }}>
+                  {t("취소", "取消")}
+                </button>
+                <button
+                  onClick={handleReport}
+                  disabled={reportLoading || !reportReason.trim()}
+                  style={{ flex: 1, padding: "11px", borderRadius: 10, border: "none", background: reportReason.trim() ? "#C0392B" : "#ddd", fontSize: 14, fontWeight: 700, color: "#fff", cursor: reportLoading ? "not-allowed" : "pointer", opacity: reportLoading ? 0.7 : 1 }}>
+                  {reportLoading ? "..." : t("신고", "举报")}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── 삭제 확인 팝업 ── */}
         {showDeleteConfirm && (
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
@@ -932,7 +1072,11 @@ export default function ZaihanLife() {
             style={{ flex: 1, background: bookmarkedPostIds.has(post.id) ? "#FFF9E6" : "#F5F5F5", border: `1px solid ${bookmarkedPostIds.has(post.id) ? "#F9CA24" : "#ddd"}`, borderRadius: 8, padding: "10px", fontSize: 13, fontWeight: 700, color: bookmarkedPostIds.has(post.id) ? "#B7950B" : "#666", cursor: "pointer" }}>
             🔖 {t(bookmarkedPostIds.has(post.id) ? "저장됨" : "북마크", bookmarkedPostIds.has(post.id) ? "已收藏" : "收藏")}
           </button>
-          <button style={{ background: "#F5F5F5", border: "1px solid #ddd", borderRadius: 8, padding: "10px 14px", fontSize: 13, color: "#999", cursor: "pointer" }}>🚩</button>
+          <button
+            onClick={() => handleShare(post.id)}
+            style={{ background: "#F5F5F5", border: "1px solid #ddd", borderRadius: 8, padding: "10px 14px", fontSize: 13, fontWeight: 600, color: "#666", cursor: "pointer" }}>
+            📤 {t("공유", "分享")}
+          </button>
         </div>
 
         <div style={{ padding: "16px" }}>
@@ -970,6 +1114,14 @@ export default function ZaihanLife() {
                 {commentLoading ? "..." : t("등록", "提交")}
               </button>
             </div>
+          </div>
+
+          <div style={{ textAlign: "center", marginTop: 20, paddingBottom: 8 }}>
+            <button
+              onClick={() => { if (!user) { setShowAuth(true); return; } setShowReportModal(true); }}
+              style={{ background: "none", border: "none", color: "#bbb", fontSize: 11, cursor: "pointer", textDecoration: "underline" }}>
+              🚩 {t("이 게시글 신고하기", "举报此帖子")}
+            </button>
           </div>
         </div>
       </div>
@@ -1137,6 +1289,13 @@ export default function ZaihanLife() {
   return (
     <div style={{ fontFamily: "'Noto Sans KR','Noto Sans SC','Apple SD Gothic Neo',sans-serif", background: "#F5F5F5", minHeight: "100vh", maxWidth: 480, margin: "0 auto" }}>
       {Header()}
+
+      {/* ── 토스트 ── */}
+      {toastMsg && (
+        <div style={{ position: "fixed", bottom: 88, left: "50%", transform: "translateX(-50%)", background: "rgba(0,0,0,0.76)", color: "#fff", padding: "10px 20px", borderRadius: 20, fontSize: 13, fontWeight: 600, zIndex: 999, pointerEvents: "none", whiteSpace: "nowrap" }}>
+          {toastMsg}
+        </div>
+      )}
 
       {showAuth && AuthModal()}
       {view === "write"    && WriteView()}
