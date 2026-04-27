@@ -117,6 +117,26 @@ export default function ZaihanLife() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
+  // Navigation
+  const [prevView, setPrevView] = useState("home");
+
+  // Bookmark
+  const [bookmarkedPostIds, setBookmarkedPostIds] = useState(new Set());
+  const [bookmarkPosts, setBookmarkPosts] = useState([]);
+  const [bookmarkLoading, setBookmarkLoading] = useState(false);
+
+  // Notice
+  const [noticePosts, setNoticePosts] = useState([]);
+  const [noticeLoading, setNoticeLoading] = useState(false);
+
+  // Suggest
+  const [suggestPosts, setSuggestPosts] = useState([]);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+  const [suggestWriteMode, setSuggestWriteMode] = useState(false);
+  const [suggestTitle, setSuggestTitle] = useState("");
+  const [suggestContent, setSuggestContent] = useState("");
+  const [suggestSubmitLoading, setSuggestSubmitLoading] = useState(false);
+
   // Auth modal
   const [showAuth, setShowAuth] = useState(false);
   const [authMode, setAuthMode] = useState("login");
@@ -157,6 +177,80 @@ export default function ZaihanLife() {
       setShowDeleteConfirm(false);
       goHome();
     }
+  };
+
+  // ── 북마크 함수 ──
+  const fetchBookmarkedPostIds = async () => {
+    if (!user) { setBookmarkedPostIds(new Set()); return; }
+    const { data } = await supabase.from("bookmarks").select("post_id").eq("user_id", user.id);
+    setBookmarkedPostIds(new Set(data?.map(b => b.post_id) || []));
+  };
+
+  const fetchBookmarkPosts = async () => {
+    if (!user) return;
+    setBookmarkLoading(true);
+    const { data } = await supabase
+      .from("bookmarks")
+      .select("post_id, posts!inner(*, profiles!posts_user_id_fkey(nickname))")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
+    setBookmarkPosts(data?.map(b => b.posts) || []);
+    setBookmarkLoading(false);
+  };
+
+  const toggleBookmark = async (postId) => {
+    if (!user) { setShowAuth(true); return; }
+    if (bookmarkedPostIds.has(postId)) {
+      await supabase.from("bookmarks").delete().eq("user_id", user.id).eq("post_id", postId);
+      setBookmarkedPostIds(prev => { const s = new Set(prev); s.delete(postId); return s; });
+    } else {
+      await supabase.from("bookmarks").insert({ user_id: user.id, post_id: postId });
+      setBookmarkedPostIds(prev => new Set([...prev, postId]));
+    }
+  };
+
+  // ── 공지 함수 ──
+  const fetchNoticePosts = async () => {
+    setNoticeLoading(true);
+    const { data } = await supabase
+      .from("posts")
+      .select("*, profiles!posts_user_id_fkey(nickname)")
+      .eq("category", "notice")
+      .order("created_at", { ascending: false });
+    setNoticePosts(data || []);
+    setNoticeLoading(false);
+  };
+
+  // ── 건의 함수 ──
+  const fetchSuggestPosts = async () => {
+    if (!user) return;
+    setSuggestLoading(true);
+    let q = supabase
+      .from("posts")
+      .select("*, profiles!posts_user_id_fkey(nickname)")
+      .eq("category", "suggest")
+      .order("created_at", { ascending: false });
+    if (user.email !== ADMIN_EMAIL) q = q.eq("user_id", user.id);
+    const { data } = await q;
+    setSuggestPosts(data || []);
+    setSuggestLoading(false);
+  };
+
+  const handleSuggestSubmit = async () => {
+    if (!user || !suggestTitle.trim() || !suggestContent.trim()) return;
+    setSuggestSubmitLoading(true);
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) { setUser(null); setShowAuth(true); setSuggestSubmitLoading(false); return; }
+    const { error } = await supabase.from("posts").insert({
+      category: "suggest", tag: "건의",
+      title: suggestTitle, content: suggestContent,
+      user_id: session.user.id, view_count: 0, like_count: 0, comment_count: 0,
+    });
+    if (!error) {
+      setSuggestTitle(""); setSuggestContent(""); setSuggestWriteMode(false);
+      fetchSuggestPosts();
+    }
+    setSuggestSubmitLoading(false);
   };
 
   // ── 배너 타이머 ──
@@ -233,9 +327,23 @@ export default function ZaihanLife() {
     fetchPosts(selectedCategory, sortBy, searchQuery);
   }, [selectedCategory, sortBy, searchQuery]);
 
+  // ── 북마크 ID 동기화 ──
+  useEffect(() => {
+    if (user) fetchBookmarkedPostIds();
+    else setBookmarkedPostIds(new Set());
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── 뷰 전환 시 데이터 로드 ──
+  useEffect(() => {
+    if (view === "bookmark" && user) fetchBookmarkPosts();
+    if (view === "notice") fetchNoticePosts();
+    if (view === "suggest" && user) fetchSuggestPosts();
+  }, [view, user]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── 게시글 열기 ──
-  const openPost = async (post) => {
-    window.scrollTo(0, 0); // [fix] 스크롤 초기화
+  const openPost = async (post, fromView = "home") => {
+    setPrevView(fromView);
+    window.scrollTo(0, 0);
     setSelectedPost(post);
     setView("detail");
     setReplies([]);
@@ -252,16 +360,39 @@ export default function ZaihanLife() {
   };
 
   const goHome = () => {
-    window.scrollTo(0, 0); // [fix] 스크롤 초기화
+    window.scrollTo(0, 0);
     setView("home");
     setSelectedPost(null);
     setReplies([]);
+    setSuggestWriteMode(false);
     fetchPosts(selectedCategory, sortBy, searchQuery);
   };
 
+  const goBackFromDetail = () => {
+    window.scrollTo(0, 0);
+    setSelectedPost(null);
+    setReplies([]);
+    if (prevView === "home") {
+      setView("home");
+      fetchPosts(selectedCategory, sortBy, searchQuery);
+    } else {
+      setView(prevView);
+    }
+  };
+
   const handleShortcut = (id) => {
+    window.scrollTo(0, 0);
     if (["free","visa","housing","job","popular"].includes(id)) {
       setSelectedCategory(id); setView("home");
+    } else if (id === "bookmark") {
+      if (!user) { setShowAuth(true); return; }
+      setView("bookmark");
+    } else if (id === "notice") {
+      setView("notice");
+    } else if (id === "suggest") {
+      if (!user) { setShowAuth(true); return; }
+      setSuggestWriteMode(false);
+      setView("suggest");
     }
   };
 
@@ -328,7 +459,12 @@ export default function ZaihanLife() {
   // ── 글 등록 ──
   const handleWriteSubmit = async () => {
     if (!user) { setShowAuth(true); return; }
-    if (!writeCat || !writeTag || !writeTitle.trim() || !writeContent.trim()) return;
+    if (writeCat === "notice" && user.email !== ADMIN_EMAIL) {
+      setWriteError(t("운영자만 공지를 작성할 수 있습니다.", "只有管理员可以发公告。"));
+      return;
+    }
+    const tagRequired = !["notice"].includes(writeCat);
+    if (!writeCat || (tagRequired && !writeTag) || !writeTitle.trim() || !writeContent.trim()) return;
     setWriteLoading(true);
     setWriteError("");
 
@@ -353,8 +489,11 @@ export default function ZaihanLife() {
     });
 
     if (!error) {
-      setWriteTitle(""); setWriteContent(""); setWriteCat(""); setWriteTag(""); setWriteAnon(false);
-      goHome();
+      setWriteTitle(""); setWriteContent(""); setWriteTag(""); setWriteAnon(false);
+      const cat = writeCat;
+      setWriteCat("");
+      if (cat === "notice") { setView("notice"); fetchNoticePosts(); }
+      else goHome();
     } else {
       console.error("[글쓰기 오류]", error);
       setWriteError(`오류: ${error.message}`);
@@ -389,6 +528,8 @@ export default function ZaihanLife() {
 
   // ── 공통 뱃지 ──
   const CatBadge = ({ catId }) => {
+    if (catId === "notice") return <span style={{ background: "#EBF5FB", color: "#1A5276", border: "1px solid #AED6F1", fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 4, whiteSpace: "nowrap" }}>📣 {t("공지", "公告")}</span>;
+    if (catId === "suggest") return <span style={{ background: "#E9F7EF", color: "#1E8449", border: "1px solid #A9DFBF", fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 4, whiteSpace: "nowrap" }}>📮 {t("건의", "建议")}</span>;
     const cat = getCategoryInfo(catId);
     return <span style={{ ...TAG_STYLE, fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 4, whiteSpace: "nowrap" }}>{lang === "ko" ? cat.ko : cat.zh}</span>;
   };
@@ -552,27 +693,34 @@ export default function ZaihanLife() {
 
   // ── 글쓰기 ──
   const WriteView = () => {
-    const canSubmit = writeCat && writeTag && writeTitle.trim() && writeContent.trim();
+    const isNotice = writeCat === "notice";
+    const tagRequired = !isNotice;
+    const canSubmit = writeCat && (!tagRequired || writeTag) && writeTitle.trim() && writeContent.trim();
+    const handleCancel = () => { if (isNotice) setView("notice"); else goHome(); };
     return (
       <div style={{ background: "#fff", minHeight: "100vh" }}>
         <div style={{ padding: "14px 16px", borderBottom: "1px solid #eee", display: "flex", alignItems: "center", gap: 10 }}>
-          <button onClick={goHome} style={{ background: "none", border: "none", cursor: "pointer", color: "#C0392B", fontSize: 13, fontWeight: 600, padding: 0 }}>← {t("취소", "取消")}</button>
-          <span style={{ fontSize: 15, fontWeight: 700, color: "#1a1a1a" }}>{t("글쓰기", "发帖")}</span>
+          <button onClick={handleCancel} style={{ background: "none", border: "none", cursor: "pointer", color: "#C0392B", fontSize: 13, fontWeight: 600, padding: 0 }}>← {t("취소", "取消")}</button>
+          <span style={{ fontSize: 15, fontWeight: 700, color: "#1a1a1a" }}>
+            {isNotice ? `📣 ${t("공지 작성", "发公告")}` : t("글쓰기", "发帖")}
+          </span>
         </div>
         <div style={{ padding: 16 }}>
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#333", marginBottom: 8 }}>{t("게시판", "版块")} <span style={{ color: "#C0392B" }}>*</span></div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {CATEGORIES.filter(c => !["all","popular"].includes(c.id)).map(cat => (
-                <button key={cat.id} onClick={() => { setWriteCat(cat.id); setWriteTag(""); }}
-                  style={{ padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer", border: "1px solid", background: writeCat === cat.id ? "#C0392B" : "#fff", color: writeCat === cat.id ? "#fff" : "#666", borderColor: writeCat === cat.id ? "#C0392B" : "#ddd" }}>
-                  {lang === "ko" ? cat.ko : cat.zh}
-                </button>
-              ))}
+          {!isNotice && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#333", marginBottom: 8 }}>{t("게시판", "版块")} <span style={{ color: "#C0392B" }}>*</span></div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {CATEGORIES.filter(c => !["all","popular"].includes(c.id)).map(cat => (
+                  <button key={cat.id} onClick={() => { setWriteCat(cat.id); setWriteTag(""); }}
+                    style={{ padding: "6px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer", border: "1px solid", background: writeCat === cat.id ? "#C0392B" : "#fff", color: writeCat === cat.id ? "#fff" : "#666", borderColor: writeCat === cat.id ? "#C0392B" : "#ddd" }}>
+                    {lang === "ko" ? cat.ko : cat.zh}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
-          {writeCat && (
+          {!isNotice && writeCat && TAGS[writeCat] && (
             <div style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: "#333", marginBottom: 8 }}>{t("말머리", "标签")} <span style={{ color: "#C0392B" }}>*</span></div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -612,7 +760,7 @@ export default function ZaihanLife() {
           >
             {writeLoading ? "..." : t("등록하기", "提交")}
           </button>
-          {(!writeCat || !writeTag) && (
+          {!isNotice && (!writeCat || !writeTag) && (
             <p style={{ textAlign: "center", fontSize: 11, color: "#C0392B", marginTop: 6 }}>{t("게시판과 말머리를 선택해주세요", "请选择版块和标签")}</p>
           )}
         </div>
@@ -656,7 +804,7 @@ export default function ZaihanLife() {
 
         <div style={{ padding: "16px 16px 0" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <button onClick={goHome} style={{ background: "none", border: "none", cursor: "pointer", color: "#C0392B", fontSize: 13, fontWeight: 600, padding: 0 }}>
+            <button onClick={goBackFromDetail} style={{ background: "none", border: "none", cursor: "pointer", color: "#C0392B", fontSize: 13, fontWeight: 600, padding: 0 }}>
               ← {t("목록으로", "返回列表")}
             </button>
             {canDelete(post) && (
@@ -702,8 +850,10 @@ export default function ZaihanLife() {
           <button style={{ flex: 1, background: "#FEF0EF", border: "1px solid #FCCBC8", borderRadius: 8, padding: "10px", fontSize: 13, fontWeight: 700, color: "#C0392B", cursor: "pointer" }}>
             👍 {t("추천", "推荐")} {post.like_count || 0}
           </button>
-          <button style={{ flex: 1, background: "#F5F5F5", border: "1px solid #ddd", borderRadius: 8, padding: "10px", fontSize: 13, fontWeight: 700, color: "#666", cursor: "pointer" }}>
-            🔖 {t("북마크", "收藏")}
+          <button
+            onClick={() => toggleBookmark(post.id)}
+            style={{ flex: 1, background: bookmarkedPostIds.has(post.id) ? "#FFF9E6" : "#F5F5F5", border: `1px solid ${bookmarkedPostIds.has(post.id) ? "#F9CA24" : "#ddd"}`, borderRadius: 8, padding: "10px", fontSize: 13, fontWeight: 700, color: bookmarkedPostIds.has(post.id) ? "#B7950B" : "#666", cursor: "pointer" }}>
+            🔖 {t(bookmarkedPostIds.has(post.id) ? "저장됨" : "북마크", bookmarkedPostIds.has(post.id) ? "已收藏" : "收藏")}
           </button>
           <button style={{ background: "#F5F5F5", border: "1px solid #ddd", borderRadius: 8, padding: "10px 14px", fontSize: 13, color: "#999", cursor: "pointer" }}>🚩</button>
         </div>
@@ -749,13 +899,174 @@ export default function ZaihanLife() {
     );
   };
 
+  // ── 내 북마크 뷰 ──
+  const BookmarkView = () => (
+    <div style={{ background: "#F5F5F5", minHeight: "100vh" }}>
+      <div style={{ background: "#fff", padding: "14px 16px", borderBottom: "1px solid #eee", display: "flex", alignItems: "center", gap: 10 }}>
+        <button onClick={goHome} style={{ background: "none", border: "none", cursor: "pointer", color: "#C0392B", fontSize: 13, fontWeight: 600, padding: 0 }}>← {t("홈으로", "返回首页")}</button>
+        <span style={{ fontSize: 15, fontWeight: 700, color: "#1a1a1a" }}>🔖 {t("내 북마크", "我的收藏")}</span>
+      </div>
+      <div style={{ paddingBottom: 80 }}>
+        {bookmarkLoading ? (
+          <div style={{ padding: 40, textAlign: "center", color: "#aaa", fontSize: 13 }}>{t("불러오는 중...", "加载中...")}</div>
+        ) : bookmarkPosts.length === 0 ? (
+          <div style={{ padding: 60, textAlign: "center", color: "#aaa", fontSize: 13 }}>
+            {t("북마크한 게시글이 없어요.", "暂无收藏的帖子。")}
+          </div>
+        ) : bookmarkPosts.map(post => (
+          <div key={post.id} onClick={() => openPost(post, "bookmark")}
+            style={{ background: "#fff", padding: "14px 16px", borderBottom: "1px solid #eee", cursor: "pointer" }}
+            onMouseEnter={e => e.currentTarget.style.background = "#FFFAF9"}
+            onMouseLeave={e => e.currentTarget.style.background = "#fff"}>
+            <div style={{ display: "flex", gap: 5, marginBottom: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <CatBadge catId={post.category} />
+              <TagBadge tag={post.tag} />
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a", lineHeight: 1.5, marginBottom: 6 }}>{post.title}</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 11, color: "#999" }}>{getAuthor(post)} · {formatDate(post.created_at)}</span>
+              <div style={{ display: "flex", gap: 8, fontSize: 11, color: "#999" }}>
+                <span>👁 {(post.view_count || 0).toLocaleString()}</span>
+                <span>👍 {post.like_count || 0}</span>
+                <span>💬 {post.comment_count || 0}</span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  // ── 공지사항 뷰 ──
+  const NoticeView = () => {
+    const isAdmin = user?.email === ADMIN_EMAIL;
+    return (
+      <div style={{ background: "#F5F5F5", minHeight: "100vh" }}>
+        <div style={{ background: "#fff", padding: "14px 16px", borderBottom: "1px solid #eee", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button onClick={goHome} style={{ background: "none", border: "none", cursor: "pointer", color: "#C0392B", fontSize: 13, fontWeight: 600, padding: 0 }}>← {t("홈으로", "返回首页")}</button>
+            <span style={{ fontSize: 15, fontWeight: 700, color: "#1a1a1a" }}>📣 {t("공지사항", "公告")}</span>
+          </div>
+          {isAdmin && (
+            <button
+              onClick={() => { setWriteCat("notice"); setWriteTag("공지"); setWriteTitle(""); setWriteContent(""); setView("write"); }}
+              style={{ background: "#C0392B", color: "#fff", border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+              {t("공지 작성", "发公告")}
+            </button>
+          )}
+        </div>
+        <div style={{ paddingBottom: 80 }}>
+          {noticeLoading ? (
+            <div style={{ padding: 40, textAlign: "center", color: "#aaa", fontSize: 13 }}>{t("불러오는 중...", "加载中...")}</div>
+          ) : noticePosts.length === 0 ? (
+            <div style={{ padding: 60, textAlign: "center", color: "#aaa", fontSize: 13 }}>
+              {t("등록된 공지사항이 없어요.", "暂无公告。")}
+            </div>
+          ) : noticePosts.map(post => (
+            <div key={post.id} onClick={() => openPost(post, "notice")}
+              style={{ background: "#fff", padding: "14px 16px", borderBottom: "1px solid #eee", cursor: "pointer" }}
+              onMouseEnter={e => e.currentTarget.style.background = "#F0F6FF"}
+              onMouseLeave={e => e.currentTarget.style.background = "#fff"}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "#1a1a1a", lineHeight: 1.5, marginBottom: 6 }}>
+                📣 {post.title}
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 11, color: "#999" }}>{formatDate(post.created_at)}</span>
+                <div style={{ display: "flex", gap: 8, fontSize: 11, color: "#999" }}>
+                  <span>👁 {(post.view_count || 0).toLocaleString()}</span>
+                  <span>💬 {post.comment_count || 0}</span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  // ── 건의하기 뷰 ──
+  const SuggestView = () => {
+    const isAdmin = user?.email === ADMIN_EMAIL;
+    return (
+      <div style={{ background: "#F5F5F5", minHeight: "100vh" }}>
+        <div style={{ background: "#fff", padding: "14px 16px", borderBottom: "1px solid #eee", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button onClick={goHome} style={{ background: "none", border: "none", cursor: "pointer", color: "#C0392B", fontSize: 13, fontWeight: 600, padding: 0 }}>← {t("홈으로", "返回首页")}</button>
+            <span style={{ fontSize: 15, fontWeight: 700, color: "#1a1a1a" }}>📮 {t("건의하기", "建议")}</span>
+          </div>
+          {!suggestWriteMode && (
+            <button onClick={() => setSuggestWriteMode(true)}
+              style={{ background: "#C0392B", color: "#fff", border: "none", borderRadius: 6, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+              {t("건의 작성", "提建议")}
+            </button>
+          )}
+        </div>
+
+        {suggestWriteMode && (
+          <div style={{ background: "#fff", padding: 16, borderBottom: "8px solid #F5F5F5" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#333", marginBottom: 10 }}>{t("새 건의 작성", "提新建议")}</div>
+            <input
+              value={suggestTitle} onChange={e => setSuggestTitle(e.target.value)}
+              placeholder={t("제목을 입력하세요", "请输入标题")}
+              style={{ ...INPUT_STYLE, marginBottom: 10 }}
+            />
+            <textarea
+              value={suggestContent} onChange={e => setSuggestContent(e.target.value)}
+              placeholder={t("건의 내용을 입력하세요", "请输入建议内容")}
+              style={{ ...INPUT_STYLE, resize: "none", height: 120, marginBottom: 10 }}
+            />
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={() => { setSuggestWriteMode(false); setSuggestTitle(""); setSuggestContent(""); }}
+                style={{ flex: 1, background: "#F5F5F5", border: "1px solid #ddd", borderRadius: 8, padding: "10px", fontSize: 13, fontWeight: 600, color: "#666", cursor: "pointer" }}>
+                {t("취소", "取消")}
+              </button>
+              <button
+                onClick={handleSuggestSubmit}
+                disabled={suggestSubmitLoading || !suggestTitle.trim() || !suggestContent.trim()}
+                style={{ flex: 2, background: suggestTitle.trim() && suggestContent.trim() ? "#C0392B" : "#ddd", color: "#fff", border: "none", borderRadius: 8, padding: "10px", fontSize: 13, fontWeight: 700, cursor: suggestSubmitLoading ? "not-allowed" : "pointer", opacity: suggestSubmitLoading ? 0.7 : 1 }}>
+                {suggestSubmitLoading ? "..." : t("제출하기", "提交")}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div style={{ paddingBottom: 80 }}>
+          {suggestLoading ? (
+            <div style={{ padding: 40, textAlign: "center", color: "#aaa", fontSize: 13 }}>{t("불러오는 중...", "加载中...")}</div>
+          ) : suggestPosts.length === 0 ? (
+            <div style={{ padding: 60, textAlign: "center", color: "#aaa", fontSize: 13 }}>
+              {t("작성한 건의사항이 없어요.", "暂无建议。")}
+            </div>
+          ) : suggestPosts.map(post => (
+            <div key={post.id} onClick={() => openPost(post, "suggest")}
+              style={{ background: "#fff", padding: "14px 16px", borderBottom: "1px solid #eee", cursor: "pointer" }}
+              onMouseEnter={e => e.currentTarget.style.background = "#F9FFF9"}
+              onMouseLeave={e => e.currentTarget.style.background = "#fff"}>
+              {isAdmin && post.user_id !== user?.id && (
+                <div style={{ fontSize: 11, color: "#999", marginBottom: 4 }}>
+                  {t("작성자", "作者")}: {getAuthor(post)}
+                </div>
+              )}
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#1a1a1a", lineHeight: 1.5, marginBottom: 6 }}>{post.title}</div>
+              <div style={{ fontSize: 11, color: "#999" }}>{formatDate(post.created_at)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div style={{ fontFamily: "'Noto Sans KR','Noto Sans SC','Apple SD Gothic Neo',sans-serif", background: "#F5F5F5", minHeight: "100vh", maxWidth: 480, margin: "0 auto" }}>
       {Header()}
 
       {showAuth && AuthModal()}
-      {view === "write"  && WriteView()}
-      {view === "detail" && selectedPost && DetailView()}
+      {view === "write"    && WriteView()}
+      {view === "detail"   && selectedPost && DetailView()}
+      {view === "bookmark" && BookmarkView()}
+      {view === "notice"   && NoticeView()}
+      {view === "suggest"  && SuggestView()}
       {view === "home"   && (
         <div>
               {/* 검색바 */}
