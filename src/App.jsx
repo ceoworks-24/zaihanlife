@@ -145,10 +145,13 @@ export default function ZaihanLife() {
   const handleDeletePost = async () => {
     if (!selectedPost) return;
     setDeleteLoading(true);
-    const { error } = await supabase.from("posts").delete().eq("id", selectedPost.id);
+    const { error, count } = await supabase
+      .from("posts")
+      .delete({ count: "exact" })
+      .eq("id", selectedPost.id);
     setDeleteLoading(false);
-    if (error) {
-      console.error("[delete post]", error);
+    if (error || count === 0) {
+      console.error("[delete post]", error || "0 rows deleted – RLS policy may be blocking admin delete");
       alert(t("삭제에 실패했습니다.", "删除失败。"));
     } else {
       setShowDeleteConfirm(false);
